@@ -13,6 +13,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from geometric_memory.data.dataset_naming import resolve_graph_dataset_directory
 from geometric_memory.data.build_in_weights_datasets import main as build_datasets_main
 from geometric_memory.in_weights.config import get_args
 from geometric_memory.in_weights.data_loader import (
@@ -175,6 +176,31 @@ def _build_dataset_generation_args(args, seed: int, overwrite: bool) -> list[str
     return dataset_args
 
 
+def _normalize_runtime_paths(args):
+    """Re-resolves notebook paths against `tiny_graphs_notebooks` root.
+
+    `get_args` derives dataset and analysis-output directories immediately, so
+    when notebooks run from a deeper working directory we need to recompute the
+    derived paths after normalizing the roots.
+    """
+    args.dataset_root = resolve_from_tiny_graphs_root(args.dataset_root)
+    args.experiment_log_root = resolve_from_tiny_graphs_root(args.experiment_log_root)
+    args.dataset_directory = resolve_graph_dataset_directory(
+        dataset_root=Path(args.dataset_root),
+        graph_type=args.graph_type,
+    )
+
+    if getattr(args, "track_embedding_evolution", False):
+        args.embedding_evolution_dir = Path(args.experiment_log_root) / "embedding_evolution"
+        args.embedding_evolution_dir.mkdir(parents=True, exist_ok=True)
+
+    if getattr(args, "track_top_k_predictions", False):
+        args.top_k_prediction_dir = Path(args.experiment_log_root) / "top_k_predictions"
+        args.top_k_prediction_dir.mkdir(parents=True, exist_ok=True)
+
+    return args
+
+
 def build_transformer_section_context(
     cli_config: Mapping[str, object],
     seed: int,
@@ -193,9 +219,7 @@ def build_transformer_section_context(
     """
     set_all_seeds(seed)
 
-    args = get_args(args_dict_to_cli_list(cli_config))
-    args.dataset_root = str(resolve_from_tiny_graphs_root(args.dataset_root))
-    args.experiment_log_root = str(resolve_from_tiny_graphs_root(args.experiment_log_root))
+    args = _normalize_runtime_paths(get_args(args_dict_to_cli_list(cli_config)))
     device = resolve_default_device()
     tokenizer = get_tokenizer(args)
     args.device = device

@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from geometric_memory.data.dataset_naming import resolve_graph_dataset_directory
 from geometric_memory.data.build_in_weights_datasets import main as build_datasets_main
 from geometric_memory.in_weights.config import get_args
 from geometric_memory.in_weights.data_loader import (
@@ -72,6 +73,26 @@ DEFAULT_NOTEBOOK_ARGS = [
     "--disable_edge_memorization_lr_decay",
     "--disable_path_finetuning_lr_decay",
 ]
+
+
+def _normalize_runtime_paths(args):
+    """Recomputes derived filesystem paths after notebook-root normalization."""
+    args.dataset_root = resolve_from_tiny_graphs_root(args.dataset_root)
+    args.experiment_log_root = resolve_from_tiny_graphs_root(args.experiment_log_root)
+    args.dataset_directory = resolve_graph_dataset_directory(
+        dataset_root=Path(args.dataset_root),
+        graph_type=args.graph_type,
+    )
+
+    if getattr(args, "track_embedding_evolution", False):
+        args.embedding_evolution_dir = Path(args.experiment_log_root) / "embedding_evolution"
+        args.embedding_evolution_dir.mkdir(parents=True, exist_ok=True)
+
+    if getattr(args, "track_top_k_predictions", False):
+        args.top_k_prediction_dir = Path(args.experiment_log_root) / "top_k_predictions"
+        args.top_k_prediction_dir.mkdir(parents=True, exist_ok=True)
+
+    return args
 
 
 @dataclass
@@ -170,10 +191,7 @@ def _build_args(
     if track_top_k_predictions:
         args_list.append("--track_top_k_predictions")
     args_list.extend(section_args)
-    args = get_args(args_list)
-    args.dataset_root = str(resolve_from_tiny_graphs_root(args.dataset_root))
-    args.experiment_log_root = str(resolve_from_tiny_graphs_root(args.experiment_log_root))
-    return args
+    return _normalize_runtime_paths(get_args(args_list))
 
 
 def _build_dataset_generation_args(args, random_seed: int, overwrite: bool) -> list[str]:
