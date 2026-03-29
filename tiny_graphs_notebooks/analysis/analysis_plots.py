@@ -157,6 +157,8 @@ def _build_star_branch_paths(
     """
     undirected_adj = {node: set() for node in range(node_count)}
     for src, dst in edge_list:
+        if src == dst:
+            continue
         undirected_adj[src].add(dst)
         undirected_adj[dst].add(src)
 
@@ -169,6 +171,8 @@ def _build_star_branch_paths(
 
     branch_paths: list[list[int]] = []
     for branch_start in sorted(undirected_adj[root_node_index]):
+        if branch_start == root_node_index:
+            continue
         path = [root_node_index, branch_start]
         prev = root_node_index
         cur = branch_start
