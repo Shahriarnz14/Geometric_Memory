@@ -235,6 +235,11 @@ def get_args(args_list=None):
         help="Include backward edges.",
     )
     parser.add_argument(
+        "--add_self_edges",
+        action="store_true",
+        help="Include `(node, node)` self-edges in the edge-memorization pretrain data.",
+    )
+    parser.add_argument(
         "--use_directional_edge_pretraining",
         action="store_true",
         help="Directional edge-pretraining setting (sd token second digit).",
