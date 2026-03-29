@@ -241,6 +241,9 @@ def get_run_name(args):
         include_backward = _stringify_bool(
             _get_arg(args, "add_backward_edges", "include_backward", default=False)
         )
+        include_self = _stringify_bool(
+            _get_arg(args, "add_self_edges", "include_self", default=False)
+        )
         task_prefix = _stringify_bool(
             _get_arg(
                 args,
@@ -286,6 +289,7 @@ def get_run_name(args):
                 f"reverse_{is_reversed}",
                 f"sd_{sd_token}",
                 f"fb_{fb_token}",
+                f"selfedge_{include_self}",
                 f"taskinprefix_{task_prefix}",
                 f"splitsubtrees_{split_subtrees}",
                 f"pause_edge_{include_edge_pause}",
