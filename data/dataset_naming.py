@@ -142,4 +142,5 @@ def build_dataset_split_filename(args, split_suffix: str) -> str:
         f"{int(args.use_directional_edge_pretraining)}"
     )
     fb_token = f"{int(args.add_forward_edges)}{int(args.add_backward_edges)}"
-    return f"{stem}_sd_{sd_token}_fb_{fb_token}_{split_suffix}.txt"
+    selfedge_token = f"{int(getattr(args, 'add_self_edges', False))}"
+    return f"{stem}_sd_{sd_token}_fb_{fb_token}_selfedge_{selfedge_token}_{split_suffix}.txt"

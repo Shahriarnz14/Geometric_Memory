@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import random
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Set, Tuple
 
@@ -72,6 +72,7 @@ class DatasetBuildConfig:
     split_subtree_holdout: bool
     add_forward_edges: bool
     add_backward_edges: bool
+    add_self_edges: bool
     include_start_node_in_path_finetuning: bool
     use_directional_edge_pretraining: bool
     random_seed: int
@@ -118,6 +119,14 @@ def _resolve_output_paths(
         "train": dataset_dir / build_dataset_split_filename(config, f"train_{train_size}"),
         "test": dataset_dir / build_dataset_split_filename(config, f"test_{test_size}"),
     }
+
+
+def _variant_configs(config: DatasetBuildConfig) -> list[DatasetBuildConfig]:
+    """Returns aligned baseline/self-edge configs for one sampled graph dataset."""
+    return [
+        replace(config, add_self_edges=False),
+        replace(config, add_self_edges=True),
+    ]
 
 
 def _write_edge_memorization_file(path: Path, directed_edges: Sequence[GraphEdge]):
@@ -587,6 +596,8 @@ def _directed_edges_for_pretraining(
     forward_edges: Sequence[GraphEdge],
     include_forward: bool,
     include_backward: bool,
+    add_self_edges: bool,
+    total_nodes: int,
 ) -> List[GraphEdge]:
     """ directed edges for pretraining.
     
@@ -595,6 +606,9 @@ def _directed_edges_for_pretraining(
         include_forward: Input parameter.
         include_backward: Input parameter.
     
+        add_self_edges: Whether to append `(node, node)` for every node.
+        total_nodes: Total node count for self-edge expansion.
+
     Returns:
         object: Function return value.
     """
@@ -604,6 +618,8 @@ def _directed_edges_for_pretraining(
         directed_edges.extend(sorted_forward)
     if include_backward:
         directed_edges.extend((dst, src) for src, dst in sorted_forward)
+    if add_self_edges:
+        directed_edges.extend((node_idx, node_idx) for node_idx in range(total_nodes))
     return _ordered_unique(directed_edges)
 
 
@@ -633,6 +649,7 @@ def _build_config_from_cli(args: argparse.Namespace) -> DatasetBuildConfig:
         split_subtree_holdout=args.split_subtree_holdout,
         add_forward_edges=args.add_forward_edges,
         add_backward_edges=args.add_backward_edges,
+        add_self_edges=args.add_self_edges,
         include_start_node_in_path_finetuning=args.include_start_node_in_path_finetuning,
         use_directional_edge_pretraining=args.use_directional_edge_pretraining,
         random_seed=args.random_seed,
@@ -647,7 +664,7 @@ def _build_config_from_cli(args: argparse.Namespace) -> DatasetBuildConfig:
     )
 
 
-def _validate_output_paths(output_paths: Dict[str, Path], overwrite: bool):
+def _validate_output_paths(output_paths: Sequence[Path], overwrite: bool):
     """ validate output paths.
     
     Args:
@@ -659,7 +676,7 @@ def _validate_output_paths(output_paths: Dict[str, Path], overwrite: bool):
     """
     if overwrite:
         return
-    existing_paths = [path for path in output_paths.values() if path.exists()]
+    existing_paths = [path for path in output_paths if path.exists()]
     if existing_paths:
         path_list = "\n".join(str(path) for path in existing_paths)
         raise FileExistsError(
@@ -726,6 +743,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--add_backward_edges",
         action="store_true",
         help="Include reversed edges in pretrain file.",
+    )
+    parser.add_argument(
+        "--add_self_edges",
+        action="store_true",
+        help="Include `(node, node)` self-edges in pretrain file only.",
     )
     parser.add_argument(
         "--include_start_node_in_path_finetuning",
@@ -830,33 +852,48 @@ def main(argv: Sequence[str] | None = None):
             train_ratio=config.train_split_ratio,
             rng=rng,
         )
-    directed_edges = _directed_edges_for_pretraining(
-        forward_edges=forward_edges,
-        include_forward=config.add_forward_edges,
-        include_backward=config.add_backward_edges,
-    )
-
-    output_paths = _resolve_output_paths(
-        config=config, train_size=len(train_paths), test_size=len(test_paths)
-    )
-    _validate_output_paths(output_paths, overwrite=config.overwrite)
-
-    _write_edge_memorization_file(output_paths["pretrain"], directed_edges)
-    _write_path_finetuning_file(
-        output_paths["train"],
-        train_paths,
-        include_start_node_in_prefix=config.include_start_node_in_path_finetuning,
-    )
-    _write_path_finetuning_file(
-        output_paths["test"],
-        test_paths,
-        include_start_node_in_prefix=config.include_start_node_in_path_finetuning,
+    variant_outputs = [
+        (
+            variant_config,
+            _resolve_output_paths(
+                config=variant_config,
+                train_size=len(train_paths),
+                test_size=len(test_paths),
+            ),
+        )
+        for variant_config in _variant_configs(config)
+    ]
+    _validate_output_paths(
+        [path for _, output_paths in variant_outputs for path in output_paths.values()],
+        overwrite=config.overwrite,
     )
 
     print("Dataset generation complete:")
-    print(f"- pretrain: {output_paths['pretrain']} ({len(directed_edges)} lines)")
-    print(f"- train:    {output_paths['train']} ({len(train_paths)} lines)")
-    print(f"- test:     {output_paths['test']} ({len(test_paths)} lines)")
+    for variant_config, output_paths in variant_outputs:
+        directed_edges = _directed_edges_for_pretraining(
+            forward_edges=forward_edges,
+            include_forward=variant_config.add_forward_edges,
+            include_backward=variant_config.add_backward_edges,
+            add_self_edges=variant_config.add_self_edges,
+            total_nodes=variant_config.total_nodes,
+        )
+
+        _write_edge_memorization_file(output_paths["pretrain"], directed_edges)
+        _write_path_finetuning_file(
+            output_paths["train"],
+            train_paths,
+            include_start_node_in_prefix=variant_config.include_start_node_in_path_finetuning,
+        )
+        _write_path_finetuning_file(
+            output_paths["test"],
+            test_paths,
+            include_start_node_in_prefix=variant_config.include_start_node_in_path_finetuning,
+        )
+
+        label = "selfedge" if variant_config.add_self_edges else "baseline"
+        print(f"- {label} pretrain: {output_paths['pretrain']} ({len(directed_edges)} lines)")
+        print(f"- {label} train:    {output_paths['train']} ({len(train_paths)} lines)")
+        print(f"- {label} test:     {output_paths['test']} ({len(test_paths)} lines)")
 
 
 if __name__ == "__main__":
