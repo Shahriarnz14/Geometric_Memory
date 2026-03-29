@@ -233,6 +233,8 @@ def _build_dataset_generation_args(args, random_seed: int, overwrite: bool) -> l
         dataset_args.append("--add_forward_edges")
     if args.add_backward_edges:
         dataset_args.append("--add_backward_edges")
+    if getattr(args, "add_self_edges", False):
+        dataset_args.append("--add_self_edges")
     if args.include_start_node_in_path_finetuning:
         dataset_args.append("--include_start_node_in_path_finetuning")
     if args.use_directional_edge_pretraining:

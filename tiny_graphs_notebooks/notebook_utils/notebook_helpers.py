@@ -165,6 +165,8 @@ def _build_dataset_generation_args(args, seed: int, overwrite: bool) -> list[str
         dataset_args.append("--add_forward_edges")
     if args.add_backward_edges:
         dataset_args.append("--add_backward_edges")
+    if getattr(args, "add_self_edges", False):
+        dataset_args.append("--add_self_edges")
     if args.include_start_node_in_path_finetuning:
         dataset_args.append("--include_start_node_in_path_finetuning")
     if args.use_directional_edge_pretraining:
@@ -456,6 +458,7 @@ def _persist_notebook_run_artifacts(
         "run_name": run_name,
         "graph_type": str(context.args.graph_type),
         "model_family": str(context.args.model_family),
+        "add_self_edges": bool(getattr(context.args, "add_self_edges", False)),
         "checkpoint_path": str(checkpoint_target),
         "embedding_history_path": str(embedding_history_target),
         "topk_predictions_path": str(topk_predictions_target),
@@ -492,13 +495,19 @@ def _manifest_matches_transformer_context(
         bool: True when the manifest is compatible with this context.
     """
     expected_family = str(context.args.model_family)
+    expected_self_edges = bool(getattr(context.args, "add_self_edges", False))
     payload_family = str(payload.get("model_family", "")).strip()
+    payload_self_edges = bool(payload.get("add_self_edges", False))
     if payload_family:
-        return payload_family == expected_family
+        return payload_family == expected_family and payload_self_edges == expected_self_edges
 
     # Backfill for older manifests that may miss `model_family`.
     run_name = str(payload.get("run_name", ""))
-    return f"_{expected_family}-" in run_name or run_name.startswith(f"{expected_family}_")
+    family_matches = f"_{expected_family}-" in run_name or run_name.startswith(f"{expected_family}_")
+    self_edge_token = f"-selfedge{int(expected_self_edges)}"
+    if expected_self_edges:
+        return family_matches and self_edge_token in run_name
+    return family_matches and (self_edge_token in run_name or "-selfedge1" not in run_name)
 
 
 def _find_latest_manifest_path(context: TransformerSectionContext) -> Path | None:
