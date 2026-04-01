@@ -61,6 +61,7 @@ def build_run_name(args, recipe_name: str) -> str:
         f"{int(args.use_directional_edge_pretraining)}"
     )
     fb_token = f"{int(args.add_forward_edges)}{int(args.add_backward_edges)}"
+    selfedge_token = f"{int(getattr(args, 'add_self_edges', False))}"
 
     model_token = (
         f"{args.model_family}-L{args.transformer_layer_count}"
@@ -84,6 +85,7 @@ def build_run_name(args, recipe_name: str) -> str:
         f"-rev{int(args.reverse_path_targets)}"
         f"-sd{sd_token}"
         f"-fb{fb_token}"
+        f"-selfedge{selfedge_token}"
         f"-task{int(args.include_task_token_in_prefix)}"
         f"-split{int(args.split_subtree_holdout)}"
     )

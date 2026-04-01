@@ -1,0 +1,11 @@
+{
+  "add_self_edges": false,
+  "checkpoint_path": "/mnt/c/research/Geometric-Memory/geometric_memory/tiny_graphs_notebooks/saved_artifacts/checkpoints/star/in_weights_star-d4-dt1-p5-n17_gpt-L1-D32-H1_tiny_star_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260401-161329_edge_memorization_final.pt",
+  "created_at_utc": "2026-04-01T20:13:36.443976+00:00",
+  "embedding_history_path": "/mnt/c/research/Geometric-Memory/geometric_memory/tiny_graphs_notebooks/saved_artifacts/pickles/star/in_weights_star-d4-dt1-p5-n17_gpt-L1-D32-H1_tiny_star_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260401-161329_embedding_history.pkl",
+  "final_embeddings_path": "/mnt/c/research/Geometric-Memory/geometric_memory/tiny_graphs_notebooks/saved_artifacts/pickles/star/in_weights_star-d4-dt1-p5-n17_gpt-L1-D32-H1_tiny_star_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260401-161329_final_embeddings.pkl",
+  "graph_type": "star",
+  "model_family": "gpt",
+  "run_name": "in_weights_star-d4-dt1-p5-n17_gpt-L1-D32-H1_tiny_star_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260401-161329",
+  "topk_predictions_path": "/mnt/c/research/Geometric-Memory/geometric_memory/tiny_graphs_notebooks/saved_artifacts/pickles/star/in_weights_star-d4-dt1-p5-n17_gpt-L1-D32-H1_tiny_star_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260401-161329_topk_predictions.pkl"
+}
