@@ -1,15 +1,14 @@
-# *.pt
+*.pt
 *.pth
 *.ckpt
-# *.pkl
-# *.pickle
+*.pkl
+*.pickle
 __pycache__/
 *.pyc
 .vscode/
 .ipynb_checkpoints/
 wandb/
 experiment_logs/
-# tiny_graphs_notebooks/saved_artifacts/
+tiny_graphs_notebooks/saved_artifacts/
 tiny_graphs_notebooks/experiment_logs/
-notebooks_old/
 evolving_graphs/
