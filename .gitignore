@@ -1,8 +1,8 @@
-*.pt
+# *.pt
 *.pth
 *.ckpt
-*.pkl
-*.pickle
+# *.pkl
+# *.pickle
 __pycache__/
 *.pyc
 .vscode/
