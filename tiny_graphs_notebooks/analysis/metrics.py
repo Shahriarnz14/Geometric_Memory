@@ -27,6 +27,26 @@ def topk_predictions_from_embeddings(embeddings: np.ndarray, k: int) -> np.ndarr
     return candidate_idx[row_idx, ordering]
 
 
+def topk_predictions_from_embeddings_allowing_self(
+    embeddings: np.ndarray,
+    k: int,
+    *,
+    allow_self_predictions: bool = False,
+) -> np.ndarray:
+    """Computes top-k predictions, optionally allowing self-node predictions."""
+    emb = np.asarray(embeddings, dtype=np.float64)
+    num_nodes = emb.shape[0]
+    top_k = max(1, min(int(k), max(1, num_nodes - (0 if allow_self_predictions else 1))))
+
+    scores = emb @ emb.T
+    if not allow_self_predictions:
+        np.fill_diagonal(scores, -np.inf)
+    candidate_idx = np.argpartition(scores, kth=-top_k, axis=1)[:, -top_k:]
+    row_idx = np.arange(num_nodes)[:, None]
+    ordering = np.argsort(scores[row_idx, candidate_idx], axis=1)[:, ::-1]
+    return candidate_idx[row_idx, ordering]
+
+
 def topk_recovery_percent(
     topk_predictions: np.ndarray,
     directed_edges: list[tuple[int, int]],
