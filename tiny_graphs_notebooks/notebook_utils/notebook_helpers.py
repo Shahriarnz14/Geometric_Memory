@@ -58,6 +58,7 @@ from tiny_graphs_notebooks.notebook_utils.experiment_utils import (
 )
 from tiny_graphs_notebooks.notebook_utils.paths import (
     get_tiny_graphs_root,
+    resolve_from_cwd,
     resolve_from_tiny_graphs_root,
 )
 
@@ -186,7 +187,7 @@ def _normalize_runtime_paths(args):
     derived paths after normalizing the roots.
     """
     args.dataset_root = resolve_from_tiny_graphs_root(args.dataset_root)
-    args.experiment_log_root = resolve_from_tiny_graphs_root(args.experiment_log_root)
+    args.experiment_log_root = resolve_from_cwd(args.experiment_log_root)
     args.dataset_directory = resolve_graph_dataset_directory(
         dataset_root=Path(args.dataset_root),
         graph_type=args.graph_type,

@@ -30,7 +30,10 @@ from geometric_memory.models import get_model
 from geometric_memory.tokenizing import get_tokenizer
 from geometric_memory.utils.run_management import build_run_name, prepare_run_directories
 from geometric_memory.utils.device import resolve_default_device
-from tiny_graphs_notebooks.notebook_utils.paths import resolve_from_tiny_graphs_root
+from tiny_graphs_notebooks.notebook_utils.paths import (
+    resolve_from_cwd,
+    resolve_from_tiny_graphs_root,
+)
 
 
 DEFAULT_NOTEBOOK_ARGS = [
@@ -78,7 +81,7 @@ DEFAULT_NOTEBOOK_ARGS = [
 def _normalize_runtime_paths(args):
     """Recomputes derived filesystem paths after notebook-root normalization."""
     args.dataset_root = resolve_from_tiny_graphs_root(args.dataset_root)
-    args.experiment_log_root = resolve_from_tiny_graphs_root(args.experiment_log_root)
+    args.experiment_log_root = resolve_from_cwd(args.experiment_log_root)
     args.dataset_directory = resolve_graph_dataset_directory(
         dataset_root=Path(args.dataset_root),
         graph_type=args.graph_type,

@@ -31,7 +31,7 @@ from tiny_graphs_notebooks.analysis.graphs import (
     build_tiny_graph_from_config,
 )
 from tiny_graphs_notebooks.analysis.metrics import (
-    topk_predictions_from_embeddings,
+    topk_predictions_from_embeddings_allowing_self,
     topk_recovery_percent,
 )
 from tiny_graphs_notebooks.analysis.reproducibility import set_all_seeds
@@ -106,6 +106,7 @@ def _node2vec_defaults(config: Mapping[str, object]) -> dict[str, object]:
             normalized["irregular_edge_count"] = FIXED_IRREGULAR_EDGE_COUNT
 
     normalized.setdefault("embedding_dim", 100)
+    normalized.setdefault("add_self_edges", False)
     normalized.setdefault("learning_rate", 0.01)
     normalized.setdefault("num_epochs", 10_000)
     normalized.setdefault("neg_samples_per_pos", 3)
@@ -130,9 +131,13 @@ def _build_run_name(config: Mapping[str, object], seed: int) -> str:
     emb_dim = int(config["embedding_dim"])
     lr = float(config["learning_rate"])
     epochs = int(config["num_epochs"])
+    add_self_edges = int(bool(config.get("add_self_edges", False)))
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     lr_tag = str(lr).replace(".", "p")
-    return f"node2vec_{graph_type}_tied_d{emb_dim}_lr{lr_tag}_e{epochs}_s{seed}_{timestamp}"
+    return (
+        f"node2vec_{graph_type}_selfedge{add_self_edges}_"
+        f"tied_d{emb_dim}_lr{lr_tag}_e{epochs}_s{seed}_{timestamp}"
+    )
 
 
 def _artifact_dirs(context: Node2VecSectionContext) -> dict[str, Path]:
@@ -177,7 +182,29 @@ def _is_node2vec_manifest(payload: Mapping[str, object]) -> bool:
     return run_name.startswith('node2vec_') or checkpoint_name.startswith('node2vec_')
 
 
-def _find_latest_node2vec_manifest(manifest_dir: Path) -> Path | None:
+def _manifest_matches_node2vec_context(
+    payload: Mapping[str, object],
+    context: Node2VecSectionContext,
+) -> bool:
+    """Checks whether a node2vec manifest matches the current self-edge variant."""
+    if not _is_node2vec_manifest(payload):
+        return False
+
+    expected_self_edges = bool(context.config.get("add_self_edges", False))
+    if "add_self_edges" in payload:
+        return bool(payload.get("add_self_edges", False)) == expected_self_edges
+
+    run_name = str(payload.get("run_name", ""))
+    expected_token = f"_selfedge{int(expected_self_edges)}_"
+    if expected_self_edges:
+        return expected_token in run_name
+    return expected_token in run_name or "_selfedge1_" not in run_name
+
+
+def _find_latest_node2vec_manifest(
+    manifest_dir: Path,
+    context: Node2VecSectionContext,
+) -> Path | None:
     """Finds the newest node2vec manifest in a graph-scoped manifest directory.
 
     Args:
@@ -189,7 +216,7 @@ def _find_latest_node2vec_manifest(manifest_dir: Path) -> Path | None:
     matched: list[Path] = []
     for manifest_path in manifest_dir.glob('*.json'):
         payload = load_json(manifest_path)
-        if _is_node2vec_manifest(payload):
+        if _manifest_matches_node2vec_context(payload, context):
             matched.append(manifest_path)
     if not matched:
         return None
@@ -197,7 +224,11 @@ def _find_latest_node2vec_manifest(manifest_dir: Path) -> Path | None:
     return matched[-1]
 
 
-def _find_node2vec_manifest_by_checkpoint(manifest_dir: Path, checkpoint_path: str) -> Path | None:
+def _find_node2vec_manifest_by_checkpoint(
+    manifest_dir: Path,
+    checkpoint_path: str,
+    context: Node2VecSectionContext,
+) -> Path | None:
     """Finds a node2vec manifest whose checkpoint path matches the input path.
 
     Args:
@@ -210,12 +241,17 @@ def _find_node2vec_manifest_by_checkpoint(manifest_dir: Path, checkpoint_path: s
     checkpoint_resolved = str(Path(checkpoint_path).resolve())
     for manifest_path in manifest_dir.glob('*.json'):
         payload = load_json(manifest_path)
-        if not _is_node2vec_manifest(payload):
+        if not _manifest_matches_node2vec_context(payload, context):
             continue
         payload_checkpoint = str(Path(str(payload.get('checkpoint_path', ''))).resolve())
         if payload_checkpoint == checkpoint_resolved:
             return manifest_path
     return None
+
+
+def _allow_self_predictions(context: Node2VecSectionContext) -> bool:
+    """Returns whether node2vec top-k metrics should allow predicting self."""
+    return bool(context.config.get("add_self_edges", False))
 
 
 def build_node2vec_section_context(config: Mapping[str, object], seed: int) -> Node2VecSectionContext:
@@ -323,7 +359,11 @@ def _train_node2vec_tied(
         if should_checkpoint:
             emb_np = model.weight.detach().cpu().numpy().copy()
             embedding_history[int(epoch)] = emb_np
-            topk_predictions = topk_predictions_from_embeddings(emb_np, k=top_k)
+            topk_predictions = topk_predictions_from_embeddings_allowing_self(
+                emb_np,
+                k=top_k,
+                allow_self_predictions=_allow_self_predictions(context),
+            )
             topk_history[int(epoch)] = topk_recovery_percent(
                 topk_predictions=topk_predictions,
                 directed_edges=context.directed_edge_list,
@@ -367,6 +407,7 @@ def _persist_artifacts(
         "graph_type": context.graph_type,
         "model_family": "node2vec",
         "model_variant": "tied",
+        "add_self_edges": bool(context.config.get("add_self_edges", False)),
         "seed": int(context.seed),
         "config": context.config,
         "node_count": int(context.node_count),
@@ -411,7 +452,7 @@ def train_or_load_node2vec_model(
     resolved_checkpoint = checkpoint_path.strip()
     manifest_payload: dict[str, object] | None = None
     if not resolved_checkpoint:
-        latest_manifest = _find_latest_node2vec_manifest(dirs["manifests"])
+        latest_manifest = _find_latest_node2vec_manifest(dirs["manifests"], context)
         if latest_manifest is None:
             raise ValueError(
                 "No prior node2vec manifest found. Set train_from_scratch=True "
@@ -429,7 +470,11 @@ def train_or_load_node2vec_model(
     context.checkpoint_path = str(Path(resolved_checkpoint))
 
     if manifest_payload is None:
-        matched_manifest = _find_node2vec_manifest_by_checkpoint(dirs["manifests"], resolved_checkpoint)
+        matched_manifest = _find_node2vec_manifest_by_checkpoint(
+            dirs["manifests"],
+            resolved_checkpoint,
+            context,
+        )
         if matched_manifest is not None:
             manifest_payload = load_json(matched_manifest)
             context.manifest_path = str(matched_manifest)
@@ -456,8 +501,16 @@ def evaluate_node2vec_edges(
 
     emb_np = context.model.weight.detach().cpu().numpy().copy()
     top_k = int(context.config.get("top_k", 5))
-    topk_predictions = topk_predictions_from_embeddings(emb_np, k=top_k)
-    top1_predictions = topk_predictions_from_embeddings(emb_np, k=1)
+    topk_predictions = topk_predictions_from_embeddings_allowing_self(
+        emb_np,
+        k=top_k,
+        allow_self_predictions=_allow_self_predictions(context),
+    )
+    top1_predictions = topk_predictions_from_embeddings_allowing_self(
+        emb_np,
+        k=1,
+        allow_self_predictions=_allow_self_predictions(context),
+    )
 
     topk_percent = topk_recovery_percent(topk_predictions, context.directed_edge_list)
     top1_percent = topk_recovery_percent(top1_predictions, context.directed_edge_list)
