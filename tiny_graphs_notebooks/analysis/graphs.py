@@ -120,6 +120,16 @@ def build_tiny_irregular_graph(
     return graph, None
 
 
+def _maybe_add_self_edges(
+    graph: nx.Graph,
+    add_self_edges: bool,
+) -> nx.Graph:
+    """Adds one self-loop per node when requested."""
+    if add_self_edges:
+        graph.add_edges_from((node, node) for node in graph.nodes())
+    return graph
+
+
 def build_tiny_graph_from_config(
     config: Mapping[str, object],
 ) -> tuple[nx.Graph, int | None]:
@@ -132,25 +142,30 @@ def build_tiny_graph_from_config(
         tuple[nx.Graph, int | None]: Graph and optional root node index.
     """
     graph_type = str(config.get('graph_type', 'star'))
+    add_self_edges = bool(config.get('add_self_edges', False))
     if graph_type == 'star':
-        return build_tiny_star_graph(
+        graph, root = build_tiny_star_graph(
             star_degree=int(config.get('star_degree', 4)),
             path_length=int(config.get('path_length', 5)),
         )
+        return _maybe_add_self_edges(graph, add_self_edges), root
     if graph_type == 'grid':
-        return build_tiny_grid_graph(
+        graph, root = build_tiny_grid_graph(
             rows=int(config.get('grid_rows', 4)),
             cols=int(config.get('grid_cols', 4)),
         )
+        return _maybe_add_self_edges(graph, add_self_edges), root
     if graph_type == 'cycle':
-        return build_tiny_cycle_graph(total_nodes=int(config.get('total_nodes', 15)))
+        graph, root = build_tiny_cycle_graph(total_nodes=int(config.get('total_nodes', 15)))
+        return _maybe_add_self_edges(graph, add_self_edges), root
     if graph_type == 'irregular':
-        return build_tiny_irregular_graph(
+        graph, root = build_tiny_irregular_graph(
             total_nodes=int(config.get('total_nodes', FIXED_IRREGULAR_NODE_COUNT)),
             irregular_edge_count=int(
                 config.get('irregular_edge_count', FIXED_IRREGULAR_EDGE_COUNT)
             ),
         )
+        return _maybe_add_self_edges(graph, add_self_edges), root
     raise ValueError(f'Unsupported graph_type: {graph_type}')
 
 
@@ -166,5 +181,6 @@ def build_bidirectional_edge_list(graph: nx.Graph) -> list[tuple[int, int]]:
     edges: list[tuple[int, int]] = []
     for u, v in graph.edges():
         edges.append((int(u), int(v)))
-        edges.append((int(v), int(u)))
+        if int(u) != int(v):
+            edges.append((int(v), int(u)))
     return sorted(edges)
