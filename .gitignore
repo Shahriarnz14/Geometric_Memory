@@ -5,6 +5,7 @@
 *.pickle
 __pycache__/
 *.pyc
+.codex
 .vscode/
 .ipynb_checkpoints/
 wandb/
