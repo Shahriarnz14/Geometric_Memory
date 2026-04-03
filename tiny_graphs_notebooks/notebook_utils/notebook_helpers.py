@@ -459,6 +459,7 @@ def _persist_notebook_run_artifacts(
         "run_name": run_name,
         "graph_type": str(context.args.graph_type),
         "model_family": str(context.args.model_family),
+        "model_architecture_label": str(getattr(context.args, "model_architecture_label", "")),
         "add_self_edges": bool(getattr(context.args, "add_self_edges", False)),
         "checkpoint_path": str(checkpoint_target),
         "embedding_history_path": str(embedding_history_target),
@@ -496,19 +497,32 @@ def _manifest_matches_transformer_context(
         bool: True when the manifest is compatible with this context.
     """
     expected_family = str(context.args.model_family)
+    expected_architecture = str(getattr(context.args, "model_architecture_label", "")).strip()
     expected_self_edges = bool(getattr(context.args, "add_self_edges", False))
     payload_family = str(payload.get("model_family", "")).strip()
+    payload_architecture = str(payload.get("model_architecture_label", "")).strip()
     payload_self_edges = bool(payload.get("add_self_edges", False))
     if payload_family:
-        return payload_family == expected_family and payload_self_edges == expected_self_edges
+        if payload_family != expected_family or payload_self_edges != expected_self_edges:
+            return False
+        if payload_architecture:
+            return payload_architecture == expected_architecture
+        # Backfill for older manifests that may miss `model_architecture_label`.
+        run_name = str(payload.get("run_name", ""))
+        return f"_{expected_architecture}_" in run_name
 
     # Backfill for older manifests that may miss `model_family`.
     run_name = str(payload.get("run_name", ""))
     family_matches = f"_{expected_family}-" in run_name or run_name.startswith(f"{expected_family}_")
+    architecture_matches = f"_{expected_architecture}_" in run_name
     self_edge_token = f"-selfedge{int(expected_self_edges)}"
     if expected_self_edges:
-        return family_matches and self_edge_token in run_name
-    return family_matches and (self_edge_token in run_name or "-selfedge1" not in run_name)
+        return family_matches and architecture_matches and self_edge_token in run_name
+    return (
+        family_matches
+        and architecture_matches
+        and (self_edge_token in run_name or "-selfedge1" not in run_name)
+    )
 
 
 def _find_latest_manifest_path(context: TransformerSectionContext) -> Path | None:

@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import re
 from typing import Mapping, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+
+def _slugify_plot_filename(filename: str) -> str:
+    """Builds a filesystem-safe stem for saved plot filenames."""
+    normalized = re.sub(r'[^A-Za-z0-9._-]+', '_', filename.strip())
+    normalized = normalized.strip('._-')
+    return normalized or 'spectral_bias'
 
 
 def _build_dense_undirected_adjacency(
@@ -177,6 +186,8 @@ def plot_spectral_bias(
     norm_projections: Sequence[float],
     *,
     title: str = '',
+    save: bool = False,
+    filename: str | None = None,
     cutoff: int | None = None,
     figsize: tuple[float, float] = (15.0, 5.0),
     ylabel_fontsize: int = 28,
@@ -191,6 +202,8 @@ def plot_spectral_bias(
         norm_eigenvalues: Normalized graph-spectrum values.
         norm_projections: Normalized embedding-projection values.
         title: Optional title.
+        save: Whether to save the plot into the experiment logs folder.
+        filename: Optional filename stem to use when saving.
         cutoff: Optional x-axis truncation.
         figsize: Figure size.
         ylabel_fontsize: Y-axis label font size.
@@ -256,5 +269,15 @@ def plot_spectral_bias(
     ax.tick_params(axis='y', labelsize=tick_fontsize)
 
     fig.tight_layout()
+    if save:
+        plot_dir = Path.cwd().resolve() / 'experiment_logs' / 'spectral_bias_plots'
+        plot_dir.mkdir(parents=True, exist_ok=True)
+        filename_stem = _slugify_plot_filename(filename or title or 'spectral_bias')
+        for extension in ('pdf', 'png'):
+            fig.savefig(
+                plot_dir / f'{filename_stem}.{extension}',
+                dpi=300,
+                bbox_inches='tight',
+            )
     plt.show()
     return fig, ax
