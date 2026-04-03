@@ -106,6 +106,7 @@ class MLP_NeuralNet(nn.Module):
         super().__init__()
         self.config = config
         self.fc1 = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         """Forward.
@@ -117,6 +118,7 @@ class MLP_NeuralNet(nn.Module):
             object: Function return value.
         """
         x = self.fc1(x)
+        x = self.dropout(x)
         # x = gelu(x)
         return x
 
