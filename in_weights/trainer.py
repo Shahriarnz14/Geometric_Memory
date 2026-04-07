@@ -4,7 +4,7 @@ from contextlib import nullcontext
 import pickle
 
 import torch
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from geometric_memory.in_weights.evaluation import (
     evaluate,
@@ -225,15 +225,15 @@ def run_edge_memorization_training(
         )
         top_k_history_by_step = {}
 
-    for epoch_index in range(args.edge_memorization_epochs):
-        progress_bar = tqdm(
-            edge_train_loader,
-            desc=(f"Edge Epoch {epoch_index + 1}/{args.edge_memorization_epochs}"),
-        )
+    epoch_progress_bar = tqdm(
+        range(args.edge_memorization_epochs),
+        desc="Edge Training",
+    )
+    for epoch_index in epoch_progress_bar:
         epoch_loss_meter = AverageMeter()
         epoch_accuracy_meter = AverageMeter()
 
-        for input_tokens, target_tokens in progress_bar:
+        for input_tokens, target_tokens in edge_train_loader:
             if args.track_embedding_evolution:
                 embedding_history_by_step[optimizer_step_index] = get_node_embeddings(
                     model, args.total_nodes
@@ -269,10 +269,12 @@ def run_edge_memorization_training(
             optimizer.zero_grad(set_to_none=True)
             optimizer_step_index += 1
 
-            progress_bar.set_description(
+            epoch_progress_bar.set_description(
                 f"Edge Epoch {epoch_index + 1}/{args.edge_memorization_epochs}"
-                f" | Loss: {epoch_loss_meter.get():.4f}"
-                f" | Acc: {epoch_accuracy_meter.get(percentage=True):.2f}%"
+            )
+            epoch_progress_bar.set_postfix(
+                loss=f"{epoch_loss_meter.get():.4f}",
+                acc=f"{epoch_accuracy_meter.get(percentage=True):.2f}%",
             )
 
         if epoch_index >= minimum_epoch_before_early_stop:
@@ -390,15 +392,15 @@ def run_path_finetuning_training(
             step=0,
         )
 
-    for epoch_index in range(args.path_finetuning_epochs):
-        progress_bar = tqdm(
-            path_train_loader,
-            desc=f"Path Epoch {epoch_index + 1}/{args.path_finetuning_epochs}",
-        )
+    epoch_progress_bar = tqdm(
+        range(args.path_finetuning_epochs),
+        desc="Path Training",
+    )
+    for epoch_index in epoch_progress_bar:
         epoch_loss_meter = AverageMeter()
         epoch_accuracy_meter = AverageMeter()
 
-        for input_tokens, target_tokens in progress_bar:
+        for input_tokens, target_tokens in path_train_loader:
             learning_rate = (
                 get_lr(
                     optimizer_step_index,
@@ -425,10 +427,12 @@ def run_path_finetuning_training(
             optimizer.zero_grad(set_to_none=True)
             optimizer_step_index += 1
 
-            progress_bar.set_description(
+            epoch_progress_bar.set_description(
                 f"Path Epoch {epoch_index + 1}/{args.path_finetuning_epochs}"
-                f" | Loss: {epoch_loss_meter.get():.4f}"
-                f" | Acc: {epoch_accuracy_meter.get(percentage=True):.2f}%"
+            )
+            epoch_progress_bar.set_postfix(
+                loss=f"{epoch_loss_meter.get():.4f}",
+                acc=f"{epoch_accuracy_meter.get(percentage=True):.2f}%",
             )
 
         should_evaluate = (epoch_index % args.path_finetuning_eval_interval_epochs == 0) or (
@@ -555,15 +559,15 @@ def run_joint_edge_and_path_training(
     optimizer_step_index = 0
     best_path_accuracy = -1.0
 
-    for epoch_index in range(args.path_finetuning_epochs):
-        progress_bar = tqdm(
-            mixed_train_loader,
-            desc=f"Joint Epoch {epoch_index + 1}/{args.path_finetuning_epochs}",
-        )
+    epoch_progress_bar = tqdm(
+        range(args.path_finetuning_epochs),
+        desc="Joint Training",
+    )
+    for epoch_index in epoch_progress_bar:
         epoch_loss_meter = AverageMeter()
         epoch_accuracy_meter = AverageMeter()
 
-        for input_tokens, target_tokens in progress_bar:
+        for input_tokens, target_tokens in mixed_train_loader:
             learning_rate = (
                 get_lr(
                     optimizer_step_index,
@@ -594,10 +598,12 @@ def run_joint_edge_and_path_training(
             optimizer.zero_grad(set_to_none=True)
             optimizer_step_index += 1
 
-            progress_bar.set_description(
+            epoch_progress_bar.set_description(
                 f"Joint Epoch {epoch_index + 1}/{args.path_finetuning_epochs}"
-                f" | Loss: {epoch_loss_meter.get():.4f}"
-                f" | Acc: {epoch_accuracy_meter.get(percentage=True):.2f}%"
+            )
+            epoch_progress_bar.set_postfix(
+                loss=f"{epoch_loss_meter.get():.4f}",
+                acc=f"{epoch_accuracy_meter.get(percentage=True):.2f}%",
             )
 
         should_evaluate = (epoch_index % args.path_finetuning_eval_interval_epochs == 0) or (
