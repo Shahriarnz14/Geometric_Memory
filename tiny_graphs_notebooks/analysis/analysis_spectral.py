@@ -140,6 +140,7 @@ def compute_spectral_bias_from_state(
     spectral_state: Mapping[str, np.ndarray],
     *,
     drop_top_eigenvector: bool = True,
+    eigenvalue_tie_tol: float = 1e-5,
     reorder_prefix: Sequence[int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Computes normalized graph-spectrum and embedding-projection curves.
@@ -148,6 +149,8 @@ def compute_spectral_bias_from_state(
         embeddings: Node embeddings `[num_nodes, dim]`.
         spectral_state: Spectral state from `build_graph_spectral_state`.
         drop_top_eigenvector: Whether to drop leading trivial eigenvector.
+        eigenvalue_tie_tol: Tolerance for treating eigenvalues as tied when
+            applying the projection-based secondary sort.
         reorder_prefix: Optional index permutation for the first k entries.
 
     Returns:
@@ -172,11 +175,21 @@ def compute_spectral_bias_from_state(
     norm_eigenvalues = filtered_eigenvalues / eig_den
     norm_projections = filtered_projections / proj_den
 
+    if len(norm_eigenvalues) > 1:
+        tie_buckets = np.round(norm_eigenvalues / max(eigenvalue_tie_tol, 1e-12)).astype(np.int64)
+        sorted_indices = np.lexsort((-norm_projections, -tie_buckets))
+        norm_eigenvalues = norm_eigenvalues[sorted_indices]
+        norm_projections = norm_projections[sorted_indices]
+
     if reorder_prefix is not None and len(reorder_prefix) > 0:
         idx = np.asarray(reorder_prefix, dtype=int)
         if np.max(idx) < len(norm_eigenvalues):
-            norm_eigenvalues[: len(idx)] = norm_eigenvalues[idx]
-            norm_projections[: len(idx)] = norm_projections[idx]
+            reordered_eigenvalues = norm_eigenvalues.copy()
+            reordered_projections = norm_projections.copy()
+            reordered_eigenvalues[: len(idx)] = norm_eigenvalues[idx]
+            reordered_projections[: len(idx)] = norm_projections[idx]
+            norm_eigenvalues = reordered_eigenvalues
+            norm_projections = reordered_projections
 
     return norm_eigenvalues, norm_projections
 
