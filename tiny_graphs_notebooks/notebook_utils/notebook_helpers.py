@@ -358,25 +358,67 @@ def build_section_context(
 
 
 def _tiny_notebook_artifact_root() -> Path:
-    """Returns the base folder for notebook checkpoints and plot pickles."""
+    """Returns the per-notebook-directory artifact root."""
+    return Path.cwd().resolve() / "saved_artifacts"
+
+
+def _legacy_tiny_notebook_artifact_root() -> Path:
+    """Returns the previous shared artifact root for backward-compatible loads."""
     return get_tiny_graphs_root() / "saved_artifacts"
 
 
-def _tiny_notebook_artifact_dirs(context: TransformerSectionContext) -> dict[str, Path]:
-    """Builds and creates tiny-notebook artifact directories for this graph scope."""
+def _tiny_notebook_artifact_dirs_for_root(
+    artifact_root: Path,
+    context: TransformerSectionContext,
+    *,
+    create: bool,
+) -> dict[str, Path]:
+    """Builds artifact directories for a specific root and graph scope."""
     graph_scope = str(context.args.graph_type)
-    root = _tiny_notebook_artifact_root()
-    checkpoint_dir = root / "checkpoints" / graph_scope
-    pickle_dir = root / "pickles" / graph_scope
-    manifest_dir = root / "manifests" / graph_scope
-    for path in (checkpoint_dir, pickle_dir, manifest_dir):
-        path.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = artifact_root / "checkpoints" / graph_scope
+    pickle_dir = artifact_root / "pickles" / graph_scope
+    manifest_dir = artifact_root / "manifests" / graph_scope
+    if create:
+        for path in (checkpoint_dir, pickle_dir, manifest_dir):
+            path.mkdir(parents=True, exist_ok=True)
     return {
-        "root": root,
+        "root": artifact_root,
         "checkpoint_dir": checkpoint_dir,
         "pickle_dir": pickle_dir,
         "manifest_dir": manifest_dir,
     }
+
+
+def _tiny_notebook_artifact_dirs(context: TransformerSectionContext) -> dict[str, Path]:
+    """Builds and creates local tiny-notebook artifact directories for this graph scope."""
+    return _tiny_notebook_artifact_dirs_for_root(
+        _tiny_notebook_artifact_root(),
+        context,
+        create=True,
+    )
+
+
+def _iter_tiny_notebook_artifact_dirs(context: TransformerSectionContext) -> list[dict[str, Path]]:
+    """Returns local-first artifact directory sets, with legacy fallback for loading."""
+    local_dirs = _tiny_notebook_artifact_dirs_for_root(
+        _tiny_notebook_artifact_root(),
+        context,
+        create=False,
+    )
+    legacy_dirs = _tiny_notebook_artifact_dirs_for_root(
+        _legacy_tiny_notebook_artifact_root(),
+        context,
+        create=False,
+    )
+    roots_seen: set[Path] = set()
+    ordered_dirs: list[dict[str, Path]] = []
+    for dirs in (local_dirs, legacy_dirs):
+        root = dirs["root"].resolve()
+        if root in roots_seen:
+            continue
+        roots_seen.add(root)
+        ordered_dirs.append(dirs)
+    return ordered_dirs
 
 
 def _embedding_history_source_path(context: TransformerSectionContext) -> Path | None:
@@ -407,7 +449,7 @@ def _persist_notebook_run_artifacts(
     context: TransformerSectionContext,
     checkpoint_source_path: str,
 ) -> dict[str, str]:
-    """Persists checkpoint and plotting pickles inside `tiny_graphs_notebooks/saved_artifacts`.
+    """Persists checkpoint and plotting pickles inside local notebook `saved_artifacts`.
 
     Args:
         context: Prepared notebook section context.
@@ -527,16 +569,19 @@ def _manifest_matches_transformer_context(
 
 def _find_latest_manifest_path(context: TransformerSectionContext) -> Path | None:
     """Finds the newest compatible manifest for the current graph/model scope."""
-    manifest_dir = _tiny_notebook_artifact_dirs(context)["manifest_dir"]
-    matched: list[Path] = []
-    for manifest_path in manifest_dir.glob('*.json'):
-        payload = load_json(manifest_path)
-        if _manifest_matches_transformer_context(payload, context):
-            matched.append(manifest_path)
-    if not matched:
-        return None
-    matched.sort(key=lambda p: p.stat().st_mtime)
-    return matched[-1]
+    for dirs in _iter_tiny_notebook_artifact_dirs(context):
+        manifest_dir = dirs["manifest_dir"]
+        if not manifest_dir.exists():
+            continue
+        matched: list[Path] = []
+        for manifest_path in manifest_dir.glob('*.json'):
+            payload = load_json(manifest_path)
+            if _manifest_matches_transformer_context(payload, context):
+                matched.append(manifest_path)
+        if matched:
+            matched.sort(key=lambda p: p.stat().st_mtime)
+            return matched[-1]
+    return None
 
 
 def _find_manifest_by_checkpoint(
@@ -544,15 +589,18 @@ def _find_manifest_by_checkpoint(
     checkpoint_path: str,
 ) -> Path | None:
     """Finds a compatible manifest that references a given checkpoint path."""
-    manifest_dir = _tiny_notebook_artifact_dirs(context)["manifest_dir"]
     checkpoint_resolved = str(Path(checkpoint_path).resolve())
-    for manifest_path in manifest_dir.glob('*.json'):
-        payload = load_json(manifest_path)
-        if not _manifest_matches_transformer_context(payload, context):
+    for dirs in _iter_tiny_notebook_artifact_dirs(context):
+        manifest_dir = dirs["manifest_dir"]
+        if not manifest_dir.exists():
             continue
-        payload_checkpoint = str(Path(str(payload.get('checkpoint_path', ''))).resolve())
-        if payload_checkpoint == checkpoint_resolved:
-            return manifest_path
+        for manifest_path in manifest_dir.glob('*.json'):
+            payload = load_json(manifest_path)
+            if not _manifest_matches_transformer_context(payload, context):
+                continue
+            payload_checkpoint = str(Path(str(payload.get('checkpoint_path', ''))).resolve())
+            if payload_checkpoint == checkpoint_resolved:
+                return manifest_path
     return None
 
 
@@ -565,13 +613,18 @@ def _iter_transformer_manifest_candidates(context: TransformerSectionContext) ->
     Returns:
         list[Path]: Candidate manifest paths ordered by recency.
     """
-    manifest_dir = _tiny_notebook_artifact_dirs(context)["manifest_dir"]
     matched: list[Path] = []
-    for manifest_path in manifest_dir.glob('*.json'):
-        payload = load_json(manifest_path)
-        if _manifest_matches_transformer_context(payload, context):
-            matched.append(manifest_path)
-    matched.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for dirs in _iter_tiny_notebook_artifact_dirs(context):
+        manifest_dir = dirs["manifest_dir"]
+        if not manifest_dir.exists():
+            continue
+        local_matches: list[Path] = []
+        for manifest_path in manifest_dir.glob('*.json'):
+            payload = load_json(manifest_path)
+            if _manifest_matches_transformer_context(payload, context):
+                local_matches.append(manifest_path)
+        local_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        matched.extend(local_matches)
     return matched
 
 
