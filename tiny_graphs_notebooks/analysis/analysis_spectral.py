@@ -176,8 +176,14 @@ def compute_spectral_bias_from_state(
     norm_projections = filtered_projections / proj_den
 
     if len(norm_eigenvalues) > 1:
-        tie_buckets = np.round(norm_eigenvalues / max(eigenvalue_tie_tol, 1e-12)).astype(np.int64)
-        sorted_indices = np.lexsort((-norm_projections, -tie_buckets))
+        tie_tolerance = max(eigenvalue_tie_tol, 1e-12)
+        tie_buckets = np.round(norm_eigenvalues / tie_tolerance).astype(np.int64)
+        projection_tiebreak = np.where(
+            norm_eigenvalues < -tie_tolerance,
+            norm_projections,
+            -norm_projections,
+        )
+        sorted_indices = np.lexsort((projection_tiebreak, -tie_buckets))
         norm_eigenvalues = norm_eigenvalues[sorted_indices]
         norm_projections = norm_projections[sorted_indices]
 
