@@ -1,0 +1,12 @@
+{
+  "add_self_edges": false,
+  "checkpoint_path": "/mnt/c/research/Geometric-Memory/geometric_memory/tiny_graphs_notebooks/experiment_notebooks_regularizers/saved_artifacts/checkpoints/cycle/in_weights_cycle-n15_gpt-L1-D512-H1_tiny_cycle_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260421-091911_edge_memorization_final.pt",
+  "created_at_utc": "2026-04-21T13:20:51.104173+00:00",
+  "embedding_history_path": "/mnt/c/research/Geometric-Memory/geometric_memory/tiny_graphs_notebooks/experiment_notebooks_regularizers/saved_artifacts/pickles/cycle/in_weights_cycle-n15_gpt-L1-D512-H1_tiny_cycle_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260421-091911_embedding_history.pkl",
+  "final_embeddings_path": "/mnt/c/research/Geometric-Memory/geometric_memory/tiny_graphs_notebooks/experiment_notebooks_regularizers/saved_artifacts/pickles/cycle/in_weights_cycle-n15_gpt-L1-D512-H1_tiny_cycle_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260421-091911_final_embeddings.pkl",
+  "graph_type": "cycle",
+  "model_architecture_label": "feedforward_plain",
+  "model_family": "gpt",
+  "run_name": "in_weights_cycle-n15_gpt-L1-D512-H1_tiny_cycle_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260421-091911",
+  "topk_predictions_path": "/mnt/c/research/Geometric-Memory/geometric_memory/tiny_graphs_notebooks/experiment_notebooks_regularizers/saved_artifacts/pickles/cycle/in_weights_cycle-n15_gpt-L1-D512-H1_tiny_cycle_feedforward_plain_edge_bs2048x2048-lr0p01x0p005_tl0-rev0-sd00-fb11-selfedge0-task1-split0_20260421-091911_topk_predictions.pkl"
+}
