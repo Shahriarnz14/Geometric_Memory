@@ -15,3 +15,4 @@ tiny_graphs_notebooks/saved_artifacts_remote/
 tiny_graphs_notebooks/*/experiment_logs/
 evolving_graphs/
 *.json
+tiny_graphs_notebooks/saved_plots/
