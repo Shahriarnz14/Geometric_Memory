@@ -276,7 +276,7 @@ def plot_spectral_bias(
     ax.set_ylabel('Normalized Magnitude', fontsize=ylabel_fontsize)
     ax.set_xlabel('Eigenvector Index', fontsize=xlabel_fontsize)
     if title:
-        ax.set_title(title, fontsize=16)
+        ax.set_title(title, fontsize=16, pad=20, y=1.1, loc='right')
     ax.axhline(0, color='black', linewidth=0.8)
     ax.grid(axis='y', which='major', linestyle='-', linewidth=0.8, color='grey', alpha=0.7, zorder=1)
     ax.grid(axis='y', which='minor', linestyle=':', linewidth=0.6, color='grey', alpha=0.5, zorder=1)
@@ -289,14 +289,165 @@ def plot_spectral_bias(
 
     fig.tight_layout()
     if save:
-        plot_dir = Path.cwd().resolve() / 'experiment_logs' / 'spectral_bias_plots'
-        plot_dir.mkdir(parents=True, exist_ok=True)
-        filename_stem = _slugify_plot_filename(filename or title or 'spectral_bias')
-        for extension in ('pdf', 'png'):
-            fig.savefig(
-                plot_dir / f'{filename_stem}.{extension}',
-                dpi=300,
-                bbox_inches='tight',
-            )
+        # plot_dir = Path.cwd().resolve() / 'experiment_logs' / 'spectral_bias_plots'
+        # plot_dir.mkdir(parents=True, exist_ok=True)
+        # filename_stem = _slugify_plot_filename(filename or title or 'spectral_bias')
+        # for extension in ('pdf', 'png'):
+        #     fig.savefig(
+        #         plot_dir / f'{filename_stem}.{extension}',
+        #         dpi=300,
+        #         bbox_inches='tight',
+        #     )
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.show()
     return fig, ax
+
+
+# ============================================================================
+# Edge Margin and Accuracy Computation
+# ============================================================================
+
+import torch
+
+
+@torch.no_grad()
+def compute_skewed_low_rank_logits(model: torch.nn.Module) -> torch.Tensor:
+    """Compute skewed low-rank logits from model embeddings and weights.
+    
+    Args:
+        model: PyTorch model with embedding and middle layer.
+        
+    Returns:
+        torch.Tensor: Skewed logits matrix.
+    """
+    # Support both naming styles:
+    # 1) model.embedding / model.middle_layer
+    # 2) model.embed_tokens / model.layers[0].mlp.fc1
+    embedding_module = getattr(model, "embedding", None)
+    if embedding_module is None:
+        embedding_module = getattr(model, "embed_tokens")
+
+    middle_layer = getattr(model, "middle_layer", None)
+    if middle_layer is None:
+        middle_layer = model.layers[0].mlp.fc1
+
+    E = embedding_module.weight.detach()   # (N, D)
+    W = middle_layer.weight.detach()       # (D, D)
+
+    # SVD(E) = U S Vh
+    _, _, Vh = torch.linalg.svd(E, full_matrices=False)  # Vh: (K, D)
+
+    # lambdas = diag(Vh @ W @ Vh.T)
+    Vh_W_Vht = Vh @ W @ Vh.T
+    lambdas = torch.diag(Vh_W_Vht)
+
+    # W' = Vh.T @ diag(lambdas) @ Vh
+    W_prime = Vh.T @ torch.diag(lambdas) @ Vh
+
+    # logits = E @ W' @ E.T
+    logits = E @ W_prime @ E.T
+    return logits
+
+
+@torch.no_grad()
+def _build_edge_mask(node_count: int, edge_list, device: torch.device) -> torch.Tensor:
+    """Build boolean edge mask from edge list."""
+    edge_mask = torch.zeros((node_count, node_count), dtype=torch.bool, device=device)
+    for edge in edge_list:
+        if len(edge) < 2:
+            continue
+        src, dst = int(edge[0]), int(edge[1])
+        if 0 <= src < node_count and 0 <= dst < node_count:
+            edge_mask[src, dst] = True
+    return edge_mask
+
+
+@torch.no_grad()
+def _edge_margin(logits: torch.Tensor, edge_mask: torch.Tensor) -> float:
+    """Compute edge margin: max(true_edge_logits) - max(non_edge_logits).
+    
+    Excludes self-edges from both calculations.
+    """
+    node_count = logits.size(0)
+    no_self_edge = ~torch.eye(node_count, dtype=torch.bool, device=logits.device)
+
+    # Mask: true edges excluding self-edges
+    pos_mask = edge_mask & no_self_edge
+    # Mask: non-edges excluding self-edges
+    neg_mask = (~edge_mask) & no_self_edge
+
+    pos_exists = pos_mask.any(dim=1)
+    neg_exists = neg_mask.any(dim=1)
+    valid_rows = pos_exists & neg_exists
+
+    pos_scores = logits.masked_fill(~pos_mask, float("-inf")).max(dim=1).values
+    neg_scores = logits.masked_fill(~neg_mask, float("-inf")).max(dim=1).values
+
+    if not valid_rows.any():
+        return float("nan")
+
+    return (pos_scores[valid_rows] - neg_scores[valid_rows]).mean().item()
+
+
+@torch.no_grad()
+def _top1_edge_accuracy(logits: torch.Tensor, edge_mask: torch.Tensor) -> float:
+    """Compute top-1 edge prediction accuracy, excluding self-edge predictions."""
+    node_count = logits.size(0)
+    no_self_edge = ~torch.eye(node_count, dtype=torch.bool, device=logits.device)
+
+    # Only consider predictions for non-self positions
+    edge_mask_no_self = edge_mask & no_self_edge
+    valid_rows = edge_mask_no_self.any(dim=1)
+
+    if not valid_rows.any():
+        return float("nan")
+
+    preds = torch.argmax(logits, dim=-1)
+    # Check if predictions are actual edges (excluding self-edge predictions)
+    hits = edge_mask_no_self[torch.arange(logits.size(0), device=logits.device), preds]
+    return hits[valid_rows].float().mean().item() * 100.0
+
+
+@torch.no_grad()
+def compute_margin_and_accuracy(
+    model: torch.nn.Module,
+    edge_list,
+    label: str = "",
+) -> tuple[float, float, float]:
+    """Compute edge margin and accuracy for original and skewed logits.
+    
+    Args:
+        model: PyTorch model.
+        edge_list: Graph edge list.
+        label: Optional label for printing.
+        
+    Returns:
+        tuple[float, float, float]: (margin_original, margin_skewed, accuracy_skewed)
+    """
+    logits_skewed = compute_skewed_low_rank_logits(model)
+
+    embedding_module = getattr(model, "embedding", None)
+    if embedding_module is None:
+        embedding_module = getattr(model, "embed_tokens")
+
+    middle_layer = getattr(model, "middle_layer", None)
+    if middle_layer is None:
+        middle_layer = model.layers[0].mlp.fc1
+
+    E = embedding_module.weight.detach()
+    W = middle_layer.weight.detach()
+
+    # Original logits use the learned middle layer: E @ W @ E.T
+    logits_original = E @ W @ E.T
+
+    edge_mask = _build_edge_mask(logits_skewed.size(0), edge_list, logits_skewed.device)
+
+    margin_original = _edge_margin(logits_original, edge_mask)
+    margin_skewed = _edge_margin(logits_skewed, edge_mask)
+    accuracy_skewed = _top1_edge_accuracy(logits_skewed, edge_mask)
+
+    prefix = f"{label} | " if label else ""
+    print(f"{prefix}edge_margin_original: {margin_original:.6f}")
+    print(f"{prefix}edge_margin_skewed: {margin_skewed:.6f}")
+    print(f"{prefix}edge_top1_accuracy_skewed: {accuracy_skewed:.2f}%")
+    return margin_original, margin_skewed, accuracy_skewed
