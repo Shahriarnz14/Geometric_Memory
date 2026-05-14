@@ -100,7 +100,7 @@ def plot_associative_vs_geometric_curves(
         lines,
         labels,
         loc='upper center',
-        bbox_to_anchor=(0.5, 1.15),
+        bbox_to_anchor=(0.5, 1.17),
         frameon=False,
         fontsize=12,
         ncol=1,
