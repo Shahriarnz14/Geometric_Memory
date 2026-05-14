@@ -30,6 +30,9 @@ class DeepSequenceModel(nn.Module):
         self.use_layernorm = config.use_layernorm
 
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head._geometric_memory_weight_init = (
+            "normal_unit" if getattr(config, "weight_init_mode", "default") == "non_geometric" else "default"
+        )
         self.embed_tokens = nn.Embedding(config.vocab_size, config.n_embd)
 
         self.use_positional_encoding = config.use_positional_encoding
@@ -112,11 +115,19 @@ class DeepSequenceModel(nn.Module):
             object: Function return value.
         """
         if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            weight_init = getattr(module, "_geometric_memory_weight_init", "default")
+            if weight_init == "non_geometric":
+                torch.nn.init.uniform_(module.weight, a=-math.sqrt(1 / module.weight.size(0)), b=math.sqrt(1 / module.weight.size(0))) 
+            elif weight_init == "normal_unit":
+                torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
+            else:
+                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            # torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
 
     def forward(self, idx, targets=None, pad_token_id=None):
         """Forward.
