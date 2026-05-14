@@ -23,6 +23,7 @@ def plot_stylized_embedding_graph(
     view: Mapping[str, float],
     root_node_index: int | None,
     axis_permutation: tuple[int, int, int],
+    save_path: str | None = None,
 ):
     """Delegates styled 3D plotting to shared graphing utility.
 
@@ -44,6 +45,7 @@ def plot_stylized_embedding_graph(
         view=view,
         root_node_index=root_node_index,
         axis_permutation=axis_permutation,
+        save_path=save_path,
     )
 
 def plot_three_snapshot_evolution(
@@ -54,6 +56,7 @@ def plot_three_snapshot_evolution(
     view: Mapping[str, float],
     axis_permutation: tuple[int, int, int],
     root_node_index: int | None = None,
+    save_path: str | None = None,
 ):
     """Plots three reduced embedding snapshots side-by-side.
 
@@ -64,7 +67,7 @@ def plot_three_snapshot_evolution(
         view: View config with `elev`, `azim`, `roll`.
         axis_permutation: Axis permutation tuple.
         root_node_index: Optional root index for path-star root highlighting.
-
+        save_path: Optional path to save the figure as PDF.
     Returns:
         tuple[object, list[object]]: Matplotlib figure and axes list.
     """
@@ -137,6 +140,8 @@ def plot_three_snapshot_evolution(
     if title:
         fig.suptitle(title)
     plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
     return fig, axes
 
@@ -257,6 +262,7 @@ def plot_ordered_heatmaps(
     wspace: float = 0.5,
     show_titles: bool = False,
     custom_order: Sequence[int] | None = None,
+    save_path: str | None = None,
 ):
     """Plots similarity/adjacency heatmaps with graph-aware node ordering.
 
@@ -269,6 +275,7 @@ def plot_ordered_heatmaps(
         wspace: Horizontal spacing between heatmap panels.
         show_titles: Whether to render subplot titles.
         custom_order: Optional precomputed node ordering.
+        save_path: Optional path to save the figure as PDF.
 
     Returns:
         tuple: Return tuple from `plot_node_similarity_and_adjacency`.
@@ -293,4 +300,5 @@ def plot_ordered_heatmaps(
         order=node_order,
         wspace=wspace,
         show_titles=show_titles,
+        save_path=save_path,
     )
