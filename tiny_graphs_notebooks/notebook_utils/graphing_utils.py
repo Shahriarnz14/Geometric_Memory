@@ -90,6 +90,7 @@ def plot_embedding_graph_3d(
     view: Mapping[str, float],
     root_node_index: int | None = None,
     axis_permutation: Tuple[int, int, int] = (0, 1, 2),
+    save_path: str | None = None,
 ):
     """Plots reduced node embeddings and graph edges in the notebook house style.
 
@@ -100,6 +101,7 @@ def plot_embedding_graph_3d(
         view: Dict containing `elev`, `azim`, and `roll`.
         root_node_index: Optional root node index (path-star special coloring).
         axis_permutation: Axis ordering used for plotting (e.g. `(0, 2, 1)`).
+        save_path: Optional path to save the figure as PDF.
 
     Returns:
         object: `(fig, ax)` matplotlib objects.
@@ -160,6 +162,8 @@ def plot_embedding_graph_3d(
         roll=float(view.get("roll", 0.0)),
     )
     ax.set_title(title, fontsize=18)
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
     return fig, ax
 
@@ -298,6 +302,7 @@ def plot_node_similarity_and_adjacency(
     wspace: float = 0.04,
     order: Sequence[int] | None = None,
     show_titles: bool = False,
+    save_path: str | None = None,
 ):
     """Plots node-node similarity and adjacency matrices side-by-side.
 
@@ -311,6 +316,7 @@ def plot_node_similarity_and_adjacency(
         wspace: Horizontal subplot spacing.
         order: Optional node reordering applied to both matrices.
         show_titles: Whether to display subplot titles.
+        save_path: Optional path to save the figure as PDF.
 
     Returns:
         object: `(fig, (ax_similarity, ax_adjacency), S_masked, A_masked)`.
@@ -382,6 +388,8 @@ def plot_node_similarity_and_adjacency(
     cb2.ax.tick_params(labelsize=18)
 
     # fig.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
     return fig, (ax1, ax2), S_masked, A_masked
 
