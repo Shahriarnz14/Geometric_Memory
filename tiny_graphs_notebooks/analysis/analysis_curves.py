@@ -49,6 +49,7 @@ def plot_associative_vs_geometric_curves(
     geometric_scores: Sequence[float],
     *,
     title: str,
+    save_path: str | None = None,
 ):
     """Plots associative-vs-geometric curves with a combined legend.
 
@@ -57,6 +58,7 @@ def plot_associative_vs_geometric_curves(
         associative_scores: Associative memorization percentages.
         geometric_scores: Geometric level scores.
         title: Figure title.
+        save_path: Optional path to save the figure as PDF.
 
     Returns:
         tuple[object, object, object]: `(fig, ax_left, ax_right)`.
@@ -68,10 +70,10 @@ def plot_associative_vs_geometric_curves(
         associative_scores,
         color='#E69F00',
         linewidth=4,
-        label='Associative memorization (top-k)',
+        label='Memorization (top-k) accuracy',
     )
     ax_left.set_xlabel('Training Steps', fontsize=20)
-    ax_left.set_ylabel('Associative Memorization [%]', color='#D55E00', fontsize=18)
+    ax_left.set_ylabel('Memorization [%]', color='#D55E00', fontsize=18)
     ax_left.tick_params(axis='x', labelsize=14)
     ax_left.tick_params(axis='y', labelsize=14, labelcolor='#D55E00')
     ax_left.set_ylim(-1, 105)
@@ -106,6 +108,8 @@ def plot_associative_vs_geometric_curves(
 
     ax_left.set_title(title, fontsize=16)
     fig.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
     return fig, ax_left, ax_right
 
