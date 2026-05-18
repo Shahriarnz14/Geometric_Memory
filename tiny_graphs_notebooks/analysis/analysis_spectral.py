@@ -9,6 +9,8 @@ from typing import Mapping, Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 
+from tiny_graphs_notebooks.notebook_utils.figure_saving import save_figure_for_context
+
 
 def _slugify_plot_filename(filename: str) -> str:
     """Builds a filesystem-safe stem for saved plot filenames."""
@@ -207,6 +209,8 @@ def plot_spectral_bias(
     title: str = '',
     save: bool = False,
     filename: str | None = None,
+    save_context: object | None = None,
+    save_model_type: str | None = None,
     cutoff: int | None = None,
     figsize: tuple[float, float] = (15.0, 5.0),
     ylabel_fontsize: int = 28,
@@ -223,6 +227,8 @@ def plot_spectral_bias(
         title: Optional title.
         save: Whether to save the plot into the experiment logs folder.
         filename: Optional filename stem to use when saving.
+        save_context: Optional notebook section context for deterministic saves.
+        save_model_type: Optional override for the model-type filename token.
         cutoff: Optional x-axis truncation.
         figsize: Figure size.
         ylabel_fontsize: Y-axis label font size.
@@ -288,7 +294,14 @@ def plot_spectral_bias(
     ax.tick_params(axis='y', labelsize=tick_fontsize)
 
     fig.tight_layout()
-    if save:
+    if save_context is not None:
+        save_figure_for_context(
+            save_context,
+            'spectral_bias_plots',
+            fig=fig,
+            model_type=save_model_type,
+        )
+    elif save:
         # plot_dir = Path.cwd().resolve() / 'experiment_logs' / 'spectral_bias_plots'
         # plot_dir.mkdir(parents=True, exist_ok=True)
         # filename_stem = _slugify_plot_filename(filename or title or 'spectral_bias')
@@ -298,7 +311,7 @@ def plot_spectral_bias(
         #         dpi=300,
         #         bbox_inches='tight',
         #     )
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
     plt.show()
     return fig, ax
 
