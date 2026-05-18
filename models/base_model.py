@@ -118,21 +118,18 @@ class DeepSequenceModel(nn.Module):
         """
         if isinstance(module, nn.Linear):
             weight_init = getattr(module, "_geometric_memory_weight_init", "default")
-            if weight_init == "non_geometric":
-                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-                if module.bias is not None:
-                    torch.nn.init.zeros_(module.bias)
-            elif weight_init == "normal_unit":
+            if weight_init == "normal_unit": # when we set weight_init_mode to non_geometric for lm_head
                 torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
-                if module.bias is not None:
-                    torch.nn.init.zeros_(module.bias)
-            else:
+            else: #default
                 torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-                if module.bias is not None:
-                    torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            # torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            torch.nn.init.normal_(module.weight, mean=0.0, std=1.0)
+
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+
+        elif isinstance(module, nn.Embedding): 
+            # this will be overwritten without for token embeddings when we have weight-tying
+            # positional embeddings do not use this init and are always PyTorch's default N(0,1)
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None, pad_token_id=None):
         """Forward.
