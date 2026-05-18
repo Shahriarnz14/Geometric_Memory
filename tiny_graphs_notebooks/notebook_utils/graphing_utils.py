@@ -9,7 +9,10 @@ from matplotlib.colors import Normalize, to_rgb
 import numpy as np
 from sklearn.decomposition import PCA
 
-from tiny_graphs_notebooks.notebook_utils.figure_saving import save_figure_for_context
+from tiny_graphs_notebooks.notebook_utils.figure_saving import (
+    apply_tight_layout,
+    save_figure_for_context,
+)
 
 try:
     import umap
@@ -95,6 +98,7 @@ def plot_embedding_graph_3d(
     save_path: str | None = None,
     save_context: object | None = None,
     alt_view: bool = False,
+    save_variant: str | None = None,
     save_model_type: str | None = None,
 ):
     """Plots reduced node embeddings and graph edges in the notebook house style.
@@ -109,6 +113,7 @@ def plot_embedding_graph_3d(
         save_path: Optional path to save the figure as PDF.
         save_context: Optional notebook section context for deterministic saves.
         alt_view: Whether this embedding figure is the alternate view.
+        save_variant: Optional short variant token for this embedding figure.
         save_model_type: Optional override for the model-type filename token.
 
     Returns:
@@ -170,16 +175,27 @@ def plot_embedding_graph_3d(
         roll=float(view.get("roll", 0.0)),
     )
     ax.set_title(title, fontsize=18)
+    preserve_axes_positions = save_variant == "fiedler_vectors"
     if save_context is not None:
         save_figure_for_context(
             save_context,
             "embeddings",
             fig=fig,
             alt_view=alt_view,
+            save_variant=save_variant,
             model_type=save_model_type,
+            preserve_axes_positions=preserve_axes_positions,
         )
     elif save_path:
-        fig.tight_layout()
+        axes_positions = (
+            [axis.get_position().frozen() for axis in fig.axes]
+            if preserve_axes_positions
+            else None
+        )
+        apply_tight_layout(fig)
+        if axes_positions is not None:
+            for axis, position in zip(fig.axes, axes_positions):
+                axis.set_position(position)
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
     return fig, ax
@@ -416,7 +432,7 @@ def plot_node_similarity_and_adjacency(
             model_type=save_model_type,
         )
     elif save_path:
-        fig.tight_layout()
+        apply_tight_layout(fig)
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
     return fig, (ax1, ax2), S_masked, A_masked
