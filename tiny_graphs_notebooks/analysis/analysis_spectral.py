@@ -50,9 +50,8 @@ def _compute_eigen_rotation_matrix(rotation_matrix: np.ndarray) -> tuple[np.ndar
     Returns:
         tuple[np.ndarray, np.ndarray]: Eigenvalues and row-wise eigenvectors.
     """
-    eigenvalues, eigenvectors = np.linalg.eig(rotation_matrix)
-    eigenvalues = np.real_if_close(eigenvalues, tol=1000)
-    eigenvectors = np.real_if_close(eigenvectors, tol=1000)
+    symmetric_matrix = 0.5 * (rotation_matrix + rotation_matrix.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(symmetric_matrix)
     sorted_indices = np.argsort(eigenvalues)
     eigenvalues = np.asarray(eigenvalues[sorted_indices], dtype=np.float64)
     eigenvectors = np.asarray(eigenvectors[:, sorted_indices], dtype=np.float64)
