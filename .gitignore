@@ -1,8 +1,17 @@
-*.pt
-*.pth
-*.ckpt
+# Never track heavy files
 *.pkl
 *.pickle
+
+# Ignore future generated timestamped artifacts
+*.pt
+*.json
+
+# Ignore regenerated local figures
+tiny_graphs_notebooks/**/saved_artifacts/figures/
+
+# Usual ignores
+*.pth
+*.ckpt
 __pycache__/
 *.pyc
 .codex
@@ -10,9 +19,5 @@ __pycache__/
 .ipynb_checkpoints/
 wandb/
 experiment_logs/
-tiny_graphs_notebooks/saved_artifacts/
-tiny_graphs_notebooks/saved_artifacts_remote/
 tiny_graphs_notebooks/*/experiment_logs/
 evolving_graphs/
-*.json
-tiny_graphs_notebooks/saved_plots/
