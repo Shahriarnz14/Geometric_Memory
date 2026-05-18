@@ -14,6 +14,7 @@ from tiny_graphs_notebooks.notebook_utils.graphing_utils import (
     plot_embedding_graph_3d,
     plot_node_similarity_and_adjacency,
 )
+from tiny_graphs_notebooks.notebook_utils.figure_saving import save_figure_for_context
 
 def plot_stylized_embedding_graph(
     reduced_xyz: np.ndarray,
@@ -24,6 +25,9 @@ def plot_stylized_embedding_graph(
     root_node_index: int | None,
     axis_permutation: tuple[int, int, int],
     save_path: str | None = None,
+    save_context: object | None = None,
+    alt_view: bool = False,
+    save_model_type: str | None = None,
 ):
     """Delegates styled 3D plotting to shared graphing utility.
 
@@ -34,6 +38,10 @@ def plot_stylized_embedding_graph(
         view: View config dict with `elev`, `azim`, `roll`.
         root_node_index: Optional star root index.
         axis_permutation: Axis permutation tuple.
+        save_path: Optional explicit path to save the figure as PDF.
+        save_context: Optional notebook section context for deterministic saves.
+        alt_view: Whether this embedding figure is the alternate view.
+        save_model_type: Optional override for the model-type filename token.
 
     Returns:
         tuple[object, object]: Matplotlib `(fig, ax)` handles.
@@ -46,6 +54,9 @@ def plot_stylized_embedding_graph(
         root_node_index=root_node_index,
         axis_permutation=axis_permutation,
         save_path=save_path,
+        save_context=save_context,
+        alt_view=alt_view,
+        save_model_type=save_model_type,
     )
 
 def plot_three_snapshot_evolution(
@@ -57,6 +68,8 @@ def plot_three_snapshot_evolution(
     axis_permutation: tuple[int, int, int],
     root_node_index: int | None = None,
     save_path: str | None = None,
+    save_context: object | None = None,
+    save_model_type: str | None = None,
 ):
     """Plots three reduced embedding snapshots side-by-side.
 
@@ -68,6 +81,8 @@ def plot_three_snapshot_evolution(
         axis_permutation: Axis permutation tuple.
         root_node_index: Optional root index for path-star root highlighting.
         save_path: Optional path to save the figure as PDF.
+        save_context: Optional notebook section context for deterministic saves.
+        save_model_type: Optional override for the model-type filename token.
     Returns:
         tuple[object, list[object]]: Matplotlib figure and axes list.
     """
@@ -139,9 +154,16 @@ def plot_three_snapshot_evolution(
 
     if title:
         fig.suptitle(title)
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    fig.tight_layout()
+    if save_context is not None:
+        save_figure_for_context(
+            save_context,
+            'geometric_memorization_evolution',
+            fig=fig,
+            model_type=save_model_type,
+        )
+    elif save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
     return fig, axes
 
@@ -263,6 +285,8 @@ def plot_ordered_heatmaps(
     show_titles: bool = False,
     custom_order: Sequence[int] | None = None,
     save_path: str | None = None,
+    save_context: object | None = None,
+    save_model_type: str | None = None,
 ):
     """Plots similarity/adjacency heatmaps with graph-aware node ordering.
 
@@ -276,10 +300,17 @@ def plot_ordered_heatmaps(
         show_titles: Whether to render subplot titles.
         custom_order: Optional precomputed node ordering.
         save_path: Optional path to save the figure as PDF.
+        save_context: Optional notebook section context for deterministic saves.
+        save_model_type: Optional override for the model-type filename token.
 
     Returns:
         tuple: Return tuple from `plot_node_similarity_and_adjacency`.
     """
+    import matplotlib as mpl
+
+    mpl.rcParams.update(mpl.rcParamsDefault)
+    mpl.rcParams['font.family'] = 'monospace'
+
     node_order = (
         list(custom_order)
         if custom_order is not None
@@ -301,4 +332,6 @@ def plot_ordered_heatmaps(
         wspace=wspace,
         show_titles=show_titles,
         save_path=save_path,
+        save_context=save_context,
+        save_model_type=save_model_type,
     )

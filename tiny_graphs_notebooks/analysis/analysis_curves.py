@@ -7,6 +7,8 @@ from typing import Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 
+from tiny_graphs_notebooks.notebook_utils.figure_saving import save_figure_for_context
+
 def compute_associative_geometric_curves(
     embedding_history: Mapping[int, np.ndarray],
     topk_recovery_history: Mapping[int, float],
@@ -50,6 +52,8 @@ def plot_associative_vs_geometric_curves(
     *,
     title: str,
     save_path: str | None = None,
+    save_context: object | None = None,
+    save_model_type: str | None = None,
 ):
     """Plots associative-vs-geometric curves with a combined legend.
 
@@ -59,10 +63,17 @@ def plot_associative_vs_geometric_curves(
         geometric_scores: Geometric level scores.
         title: Figure title.
         save_path: Optional path to save the figure as PDF.
+        save_context: Optional notebook section context for deterministic saves.
+        save_model_type: Optional override for the model-type filename token.
 
     Returns:
         tuple[object, object, object]: `(fig, ax_left, ax_right)`.
     """
+    import matplotlib as mpl
+
+    mpl.rcParams.update(mpl.rcParamsDefault)
+    mpl.rcParams['font.family'] = 'monospace'
+
     fig, ax_left = plt.subplots(figsize=(7.0, 5.0))
 
     line_assoc, = ax_left.plot(
@@ -108,8 +119,14 @@ def plot_associative_vs_geometric_curves(
 
     ax_left.set_title(title, fontsize=16)
     fig.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    if save_context is not None:
+        save_figure_for_context(
+            save_context,
+            'geometric_memorization_evolution',
+            fig=fig,
+            model_type=save_model_type,
+        )
+    elif save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
     return fig, ax_left, ax_right
-

@@ -28,9 +28,14 @@ from tiny_graphs_notebooks.analysis.analysis_spectral import (
     compute_spectral_bias_from_state,
     plot_spectral_bias,
 )
+from tiny_graphs_notebooks.notebook_utils.figure_saving import (
+    build_notebook_figure_path,
+    save_figure_for_context,
+)
 
 __all__ = [
     'build_graph_spectral_state',
+    'build_notebook_figure_path',
     'build_reduced_evolution_snapshots',
     'compute_associative_geometric_curves',
     'compute_laplacian_coordinates',
@@ -46,4 +51,5 @@ __all__ = [
     'resolve_embedding_step',
     'resolve_evolution_steps',
     'select_embedding_snapshot',
+    'save_figure_for_context',
 ]
