@@ -9,6 +9,8 @@ from matplotlib.colors import Normalize, to_rgb
 import numpy as np
 from sklearn.decomposition import PCA
 
+from tiny_graphs_notebooks.notebook_utils.figure_saving import save_figure_for_context
+
 try:
     import umap
 except Exception:  # pragma: no cover - optional dependency for notebook workflows
@@ -91,6 +93,9 @@ def plot_embedding_graph_3d(
     root_node_index: int | None = None,
     axis_permutation: Tuple[int, int, int] = (0, 1, 2),
     save_path: str | None = None,
+    save_context: object | None = None,
+    alt_view: bool = False,
+    save_model_type: str | None = None,
 ):
     """Plots reduced node embeddings and graph edges in the notebook house style.
 
@@ -102,6 +107,9 @@ def plot_embedding_graph_3d(
         root_node_index: Optional root node index (path-star special coloring).
         axis_permutation: Axis ordering used for plotting (e.g. `(0, 2, 1)`).
         save_path: Optional path to save the figure as PDF.
+        save_context: Optional notebook section context for deterministic saves.
+        alt_view: Whether this embedding figure is the alternate view.
+        save_model_type: Optional override for the model-type filename token.
 
     Returns:
         object: `(fig, ax)` matplotlib objects.
@@ -162,8 +170,17 @@ def plot_embedding_graph_3d(
         roll=float(view.get("roll", 0.0)),
     )
     ax.set_title(title, fontsize=18)
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    if save_context is not None:
+        save_figure_for_context(
+            save_context,
+            "embeddings",
+            fig=fig,
+            alt_view=alt_view,
+            model_type=save_model_type,
+        )
+    elif save_path:
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
     return fig, ax
 
@@ -303,6 +320,8 @@ def plot_node_similarity_and_adjacency(
     order: Sequence[int] | None = None,
     show_titles: bool = False,
     save_path: str | None = None,
+    save_context: object | None = None,
+    save_model_type: str | None = None,
 ):
     """Plots node-node similarity and adjacency matrices side-by-side.
 
@@ -317,6 +336,8 @@ def plot_node_similarity_and_adjacency(
         order: Optional node reordering applied to both matrices.
         show_titles: Whether to display subplot titles.
         save_path: Optional path to save the figure as PDF.
+        save_context: Optional notebook section context for deterministic saves.
+        save_model_type: Optional override for the model-type filename token.
 
     Returns:
         object: `(fig, (ax_similarity, ax_adjacency), S_masked, A_masked)`.
@@ -387,9 +408,16 @@ def plot_node_similarity_and_adjacency(
     cb2.set_label("Adjacency", fontsize=22)
     cb2.ax.tick_params(labelsize=18)
 
-    # fig.tight_layout()
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    if save_context is not None:
+        save_figure_for_context(
+            save_context,
+            "node_embedding_similarity_heatmap",
+            fig=fig,
+            model_type=save_model_type,
+        )
+    elif save_path:
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.show()
     return fig, (ax1, ax2), S_masked, A_masked
 
@@ -418,6 +446,8 @@ def plot_embedding_evolution_3d(
     root_node_index: int | None = None,
     axis_permutation: Tuple[int, int, int] = (0, 1, 2),
     max_snapshots: int = 4,
+    save_context: object | None = None,
+    save_model_type: str | None = None,
 ):
     """Plots multi-step 3D embedding evolution snapshots.
 
@@ -429,6 +459,8 @@ def plot_embedding_evolution_3d(
         root_node_index: Optional root node index for path-star coloring.
         axis_permutation: Axis order for plotting.
         max_snapshots: Maximum number of time snapshots to display.
+        save_context: Optional notebook section context for deterministic saves.
+        save_model_type: Optional override for the model-type filename token.
 
     Returns:
         object: `(fig, axes)` matplotlib objects.
@@ -506,7 +538,14 @@ def plot_embedding_evolution_3d(
         ax.set_title(f"step={step}", fontsize=14)
 
     fig.suptitle(title, fontsize=18)
-    plt.tight_layout()
+    fig.tight_layout()
+    if save_context is not None:
+        save_figure_for_context(
+            save_context,
+            "geometric_memorization_evolution",
+            fig=fig,
+            model_type=save_model_type,
+        )
     plt.show()
     return fig, axes
 
