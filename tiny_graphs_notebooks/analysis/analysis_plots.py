@@ -27,6 +27,7 @@ def plot_stylized_embedding_graph(
     save_path: str | None = None,
     save_context: object | None = None,
     alt_view: bool = False,
+    save_variant: str | None = None,
     save_model_type: str | None = None,
 ):
     """Delegates styled 3D plotting to shared graphing utility.
@@ -41,6 +42,7 @@ def plot_stylized_embedding_graph(
         save_path: Optional explicit path to save the figure as PDF.
         save_context: Optional notebook section context for deterministic saves.
         alt_view: Whether this embedding figure is the alternate view.
+        save_variant: Optional short variant token for this embedding figure.
         save_model_type: Optional override for the model-type filename token.
 
     Returns:
@@ -56,6 +58,7 @@ def plot_stylized_embedding_graph(
         save_path=save_path,
         save_context=save_context,
         alt_view=alt_view,
+        save_variant=save_variant,
         save_model_type=save_model_type,
     )
 
