@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 import shutil
 from typing import Mapping, Sequence
@@ -85,6 +87,8 @@ class TransformerSectionContext:
         topk_history_path: Optional saved top-k prediction pickle path.
         final_embeddings_path: Optional saved final-embeddings pickle path.
         manifest_path: Optional saved run-manifest JSON path.
+        artifact_model_type: Optional notebook-facing model type override used
+            to keep saved artifacts distinct when notebooks share a directory.
     """
 
     args: object
@@ -104,6 +108,14 @@ class TransformerSectionContext:
     topk_history_path: str = ""
     final_embeddings_path: str = ""
     manifest_path: str = ""
+    artifact_model_type: str = ""
+
+
+NOTEBOOK_ONLY_CONFIG_KEYS = {
+    "artifact_model_type",
+    "save_model_type",
+    "__artifact_model_type",
+}
 
 
 def args_dict_to_cli_list(args_dict: Mapping[str, object]) -> list[str]:
@@ -117,6 +129,8 @@ def args_dict_to_cli_list(args_dict: Mapping[str, object]) -> list[str]:
     """
     cli_args: list[str] = []
     for key, value in args_dict.items():
+        if key in NOTEBOOK_ONLY_CONFIG_KEYS:
+            continue
         if isinstance(value, bool):
             if value:
                 cli_args.append(key)
@@ -222,7 +236,15 @@ def build_transformer_section_context(
     """
     set_all_seeds(seed)
 
+    artifact_model_type = str(
+        cli_config.get("artifact_model_type")
+        or cli_config.get("save_model_type")
+        or cli_config.get("__artifact_model_type")
+        or ""
+    ).strip()
     args = _normalize_runtime_paths(get_args(args_dict_to_cli_list(cli_config)))
+    args.artifact_model_type = artifact_model_type
+    args.notebook_seed = int(seed)
     device = resolve_default_device()
     tokenizer = get_tokenizer(args)
     args.device = device
@@ -327,6 +349,7 @@ def build_transformer_section_context(
         path_train_loader=path_train_loader,
         path_test_loader=path_test_loader,
         checkpoint_path="",
+        artifact_model_type=artifact_model_type,
     )
 
 
@@ -445,6 +468,225 @@ def _build_topk_predictions_snapshot(context: TransformerSectionContext) -> dict
     return {-1: topk_predictions}
 
 
+def _canonical_identity_value(value: object) -> object:
+    """Normalizes values before putting them into checkpoint identities."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return f"{float(value):.15g}"
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
+
+
+def _canonical_identity(identity: Mapping[str, object]) -> dict[str, object]:
+    """Returns a JSON-stable identity dictionary."""
+    return {
+        str(key): _canonical_identity_value(value)
+        for key, value in sorted(identity.items(), key=lambda item: str(item[0]))
+    }
+
+
+def _checkpoint_identity_key(identity: Mapping[str, object]) -> str:
+    """Builds a stable short-independent key for an artifact identity."""
+    payload = json.dumps(
+        _canonical_identity(identity),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _arg_identity(args: object, name: str, default: object = None) -> object:
+    return _canonical_identity_value(getattr(args, name, default))
+
+
+def _transformer_artifact_model_type(context: TransformerSectionContext) -> str:
+    """Returns the notebook-facing model type stored in checkpoint manifests."""
+    override = str(
+        getattr(context, "artifact_model_type", "")
+        or getattr(context.args, "artifact_model_type", "")
+        or ""
+    ).strip()
+    if override:
+        return override
+
+    architecture = str(getattr(context.args, "model_architecture_label", "") or "").strip()
+    if architecture:
+        return architecture
+    return str(getattr(context.args, "model_family", "model"))
+
+
+def _transformer_checkpoint_identity(context: TransformerSectionContext) -> dict[str, object]:
+    """Builds the exact context identity required for checkpoint auto-loading."""
+    args = context.args
+    identity = {
+        "artifact_model_type": _transformer_artifact_model_type(context),
+        "seed": _arg_identity(args, "notebook_seed"),
+        "graph_type": _arg_identity(args, "graph_type"),
+        "total_nodes": _arg_identity(args, "total_nodes"),
+        "path_length": _arg_identity(args, "path_length"),
+        "star_degree": _arg_identity(args, "star_degree"),
+        "star_subtree_degree": _arg_identity(args, "star_subtree_degree"),
+        "grid_rows": _arg_identity(args, "grid_rows"),
+        "grid_cols": _arg_identity(args, "grid_cols"),
+        "irregular_edge_count": _arg_identity(args, "irregular_edge_count"),
+        "train_split_ratio": _arg_identity(args, "train_split_ratio"),
+        "split_subtree_holdout": _arg_identity(args, "split_subtree_holdout", False),
+        "model_family": _arg_identity(args, "model_family"),
+        "model_architecture_label": _arg_identity(args, "model_architecture_label"),
+        "transformer_layer_count": _arg_identity(args, "transformer_layer_count"),
+        "embedding_dimension": _arg_identity(args, "embedding_dimension"),
+        "attention_head_count": _arg_identity(args, "attention_head_count"),
+        "dropout_rate": _arg_identity(args, "dropout_rate", 0.0),
+        "use_attention": _arg_identity(args, "use_attention", True),
+        "use_residual_connections": _arg_identity(args, "use_residual_connections", True),
+        "use_layer_norm": _arg_identity(args, "use_layer_norm", True),
+        "use_positional_encoding": _arg_identity(args, "use_positional_encoding", True),
+        "tie_input_output_embeddings": _arg_identity(args, "tie_input_output_embeddings", True),
+        "freeze_token_embeddings": _arg_identity(args, "freeze_token_embeddings", False),
+        "use_mlp_only_blocks": _arg_identity(args, "use_mlp_only_blocks", False),
+        "weight_init_mode": _arg_identity(args, "weight_init_mode", "default"),
+        "mamba_state_dimension": _arg_identity(args, "mamba_state_dimension", None),
+        "mamba_convolution_kernel": _arg_identity(args, "mamba_convolution_kernel", None),
+        "mamba_expand_factor": _arg_identity(args, "mamba_expand_factor", None),
+        "add_forward_edges": _arg_identity(args, "add_forward_edges", False),
+        "add_backward_edges": _arg_identity(args, "add_backward_edges", False),
+        "add_self_edges": _arg_identity(args, "add_self_edges", False),
+        "use_directional_edge_pretraining": _arg_identity(
+            args,
+            "use_directional_edge_pretraining",
+            False,
+        ),
+        "include_start_node_in_path_finetuning": _arg_identity(
+            args,
+            "include_start_node_in_path_finetuning",
+            False,
+        ),
+        "include_task_token_in_prefix": _arg_identity(args, "include_task_token_in_prefix", True),
+        "edge_memorization_drop_pause_token": _arg_identity(
+            args,
+            "edge_memorization_drop_pause_token",
+            True,
+        ),
+        "edge_memorization_learning_rate": _arg_identity(
+            args,
+            "edge_memorization_learning_rate",
+        ),
+        "optimizer_weight_decay": _arg_identity(args, "optimizer_weight_decay", 0.0),
+        "edge_memorization_batch_size": _arg_identity(args, "edge_memorization_batch_size"),
+        "edge_memorization_epochs": _arg_identity(args, "edge_memorization_epochs"),
+        "edge_memorization_warmup_steps": _arg_identity(args, "edge_memorization_warmup_steps"),
+        "disable_edge_memorization_lr_decay": _arg_identity(
+            args,
+            "disable_edge_memorization_lr_decay",
+            False,
+        ),
+        "enable_edge_memorization_early_stopping": _arg_identity(
+            args,
+            "enable_edge_memorization_early_stopping",
+            False,
+        ),
+    }
+    return _canonical_identity(identity)
+
+
+def _legacy_run_float_token(value: object) -> str:
+    return f"{float(value):g}".replace(".", "p")
+
+
+def _legacy_graph_token(context: TransformerSectionContext) -> str:
+    args = context.args
+    graph_type = str(getattr(args, "graph_type", ""))
+    if graph_type == "star":
+        return (
+            f"star-d{args.star_degree}"
+            f"-dt{args.star_subtree_degree}"
+            f"-p{args.path_length}"
+            f"-n{args.total_nodes}"
+        )
+    if graph_type == "grid":
+        return f"grid-r{args.grid_rows}-c{args.grid_cols}-n{args.total_nodes}"
+    if graph_type == "cycle":
+        return f"cycle-n{args.total_nodes}"
+    if graph_type == "irregular":
+        return f"irregular-n{args.total_nodes}-e{args.irregular_edge_count}"
+    return f"{graph_type}-n{getattr(args, 'total_nodes', '')}"
+
+
+def _manifest_field_matches(
+    payload: Mapping[str, object],
+    key: str,
+    expected: object,
+) -> bool:
+    if key not in payload:
+        return True
+    return _canonical_identity_value(payload[key]) == _canonical_identity_value(expected)
+
+
+def _legacy_manifest_matches_transformer_context(
+    payload: Mapping[str, object],
+    context: TransformerSectionContext,
+) -> bool:
+    """Best-effort matcher for manifests saved before checkpoint identities."""
+    args = context.args
+    run_name = str(payload.get("run_name", ""))
+    expected_family = str(getattr(args, "model_family", "")).strip()
+    expected_architecture = str(getattr(args, "model_architecture_label", "")).strip()
+    expected_self_edges = bool(getattr(args, "add_self_edges", False))
+
+    payload_family = str(payload.get("model_family", "")).strip()
+    payload_architecture = str(payload.get("model_architecture_label", "")).strip()
+    if payload_family and payload_family != expected_family:
+        return False
+    if payload_architecture and payload_architecture != expected_architecture:
+        return False
+    if not _manifest_field_matches(payload, "add_self_edges", expected_self_edges):
+        return False
+
+    required_tokens = [
+        _legacy_graph_token(context),
+        f"_{expected_family}-L{args.transformer_layer_count}-D{args.embedding_dimension}",
+        f"tiny_{args.graph_type}_{expected_architecture}_edge",
+        f"-lr{_legacy_run_float_token(args.edge_memorization_learning_rate)}x",
+        f"-fb{int(args.add_forward_edges)}{int(args.add_backward_edges)}",
+        f"-selfedge{int(expected_self_edges)}",
+    ]
+    if str(getattr(args, "model_family", "")).startswith("mamba"):
+        required_tokens[1] = (
+            f"_{expected_family}-L{args.transformer_layer_count}"
+            f"-D{args.embedding_dimension}"
+            f"-S{args.mamba_state_dimension}"
+            f"-C{args.mamba_convolution_kernel}"
+            f"-E{args.mamba_expand_factor}"
+        )
+
+    if not run_name or any(token not in run_name for token in required_tokens):
+        return False
+
+    required_manifest_fields = {
+        "artifact_model_type": _transformer_artifact_model_type(context),
+        "seed": getattr(args, "notebook_seed", None),
+        "add_forward_edges": bool(getattr(args, "add_forward_edges", False)),
+        "add_backward_edges": bool(getattr(args, "add_backward_edges", False)),
+        "edge_memorization_learning_rate": getattr(
+            args,
+            "edge_memorization_learning_rate",
+            None,
+        ),
+        "dropout_rate": float(getattr(args, "dropout_rate", 0.0) or 0.0),
+        "optimizer_weight_decay": float(getattr(args, "optimizer_weight_decay", 0.0) or 0.0),
+        "weight_init_mode": str(getattr(args, "weight_init_mode", "default")),
+    }
+    for key, expected in required_manifest_fields.items():
+        if key not in payload or not _manifest_field_matches(payload, key, expected):
+            return False
+
+    return True
+
+
 def _persist_notebook_run_artifacts(
     context: TransformerSectionContext,
     checkpoint_source_path: str,
@@ -496,13 +738,28 @@ def _persist_notebook_run_artifacts(
         write_pickle(topk_predictions_target, _build_topk_predictions_snapshot(context))
 
     manifest_target = dirs["manifest_dir"] / f"{run_name}.json"
+    checkpoint_identity = _transformer_checkpoint_identity(context)
     manifest_payload = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_name": run_name,
         "graph_type": str(context.args.graph_type),
         "model_family": str(context.args.model_family),
         "model_architecture_label": str(getattr(context.args, "model_architecture_label", "")),
+        "artifact_model_type": _transformer_artifact_model_type(context),
+        "seed": int(getattr(context.args, "notebook_seed", 0)),
+        "checkpoint_identity": checkpoint_identity,
+        "checkpoint_identity_key": _checkpoint_identity_key(checkpoint_identity),
+        "add_forward_edges": bool(getattr(context.args, "add_forward_edges", False)),
+        "add_backward_edges": bool(getattr(context.args, "add_backward_edges", False)),
         "add_self_edges": bool(getattr(context.args, "add_self_edges", False)),
+        "weight_init_mode": str(getattr(context.args, "weight_init_mode", "default")),
+        "edge_memorization_learning_rate": float(
+            getattr(context.args, "edge_memorization_learning_rate", 0.0)
+        ),
+        "dropout_rate": float(getattr(context.args, "dropout_rate", 0.0) or 0.0),
+        "optimizer_weight_decay": float(
+            getattr(context.args, "optimizer_weight_decay", 0.0) or 0.0
+        ),
         "checkpoint_path": str(checkpoint_target),
         "embedding_history_path": str(embedding_history_target),
         "topk_predictions_path": str(topk_predictions_target),
@@ -529,7 +786,7 @@ def _manifest_matches_transformer_context(
     payload: Mapping[str, object],
     context: TransformerSectionContext,
 ) -> bool:
-    """Checks whether a manifest belongs to the current transformer model family.
+    """Checks whether a manifest exactly matches the current checkpoint identity.
 
     Args:
         payload: Manifest JSON payload.
@@ -538,33 +795,17 @@ def _manifest_matches_transformer_context(
     Returns:
         bool: True when the manifest is compatible with this context.
     """
-    expected_family = str(context.args.model_family)
-    expected_architecture = str(getattr(context.args, "model_architecture_label", "")).strip()
-    expected_self_edges = bool(getattr(context.args, "add_self_edges", False))
-    payload_family = str(payload.get("model_family", "")).strip()
-    payload_architecture = str(payload.get("model_architecture_label", "")).strip()
-    payload_self_edges = bool(payload.get("add_self_edges", False))
-    if payload_family:
-        if payload_family != expected_family or payload_self_edges != expected_self_edges:
-            return False
-        if payload_architecture:
-            return payload_architecture == expected_architecture
-        # Backfill for older manifests that may miss `model_architecture_label`.
-        run_name = str(payload.get("run_name", ""))
-        return f"_{expected_architecture}_" in run_name
+    expected_identity = _transformer_checkpoint_identity(context)
+    expected_key = _checkpoint_identity_key(expected_identity)
+    payload_key = str(payload.get("checkpoint_identity_key", "")).strip()
+    if payload_key:
+        return payload_key == expected_key
 
-    # Backfill for older manifests that may miss `model_family`.
-    run_name = str(payload.get("run_name", ""))
-    family_matches = f"_{expected_family}-" in run_name or run_name.startswith(f"{expected_family}_")
-    architecture_matches = f"_{expected_architecture}_" in run_name
-    self_edge_token = f"-selfedge{int(expected_self_edges)}"
-    if expected_self_edges:
-        return family_matches and architecture_matches and self_edge_token in run_name
-    return (
-        family_matches
-        and architecture_matches
-        and (self_edge_token in run_name or "-selfedge1" not in run_name)
-    )
+    payload_identity = payload.get("checkpoint_identity")
+    if isinstance(payload_identity, Mapping):
+        return _checkpoint_identity_key(payload_identity) == expected_key
+
+    return _legacy_manifest_matches_transformer_context(payload, context)
 
 
 def _find_latest_manifest_path(context: TransformerSectionContext) -> Path | None:
@@ -662,7 +903,7 @@ def _load_latest_compatible_transformer_checkpoint(
     candidates = _iter_transformer_manifest_candidates(context)
     if not candidates:
         raise RuntimeError(
-            "No transformer manifests found for this graph scope/model family. "
+            "No transformer manifests found for this exact checkpoint identity. "
             "Train once with train_from_scratch=True, or set checkpoint_path explicitly."
         )
 
@@ -686,7 +927,7 @@ def _load_latest_compatible_transformer_checkpoint(
 
     summary = "\n".join(errors[:5])
     raise RuntimeError(
-        "No compatible transformer checkpoint found in manifests for this graph scope. "
+        "No exact transformer checkpoint could be loaded for this checkpoint identity. "
         "Consider retraining or pass checkpoint_path explicitly.\n"
         f"Sample load errors:\n{summary}"
     )
@@ -714,7 +955,7 @@ def _resolve_checkpoint_for_loading(
     latest_manifest_path = _find_latest_manifest_path(context)
     if latest_manifest_path is None:
         raise ValueError(
-            "No saved checkpoint manifest found for this graph scope. "
+            "No saved checkpoint manifest found for this exact checkpoint identity. "
             "Train once with train_from_scratch=True, or set checkpoint_path explicitly."
         )
 
