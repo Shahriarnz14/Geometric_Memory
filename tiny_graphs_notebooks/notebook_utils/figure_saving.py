@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 from typing import Any
+import warnings
 
 import matplotlib.pyplot as plt
 
@@ -67,6 +68,10 @@ def _model_type_token(context: object, override: str | None = None) -> str:
     if override:
         return override
 
+    artifact_model_type = str(_get_context_value(context, "artifact_model_type", "") or "").strip()
+    if artifact_model_type:
+        return artifact_model_type
+
     model_family = str(_get_context_value(context, "model_family", "") or "").strip().lower()
     architecture = str(
         _get_context_value(context, "model_architecture_label", "") or ""
@@ -93,11 +98,31 @@ def _is_forward_only(context: object) -> bool:
     )
 
 
+def apply_tight_layout(fig=None) -> None:
+    """Applies tight layout while suppressing Matplotlib's noisy fallback warnings."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Tight layout not applied.*",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="This figure includes Axes that are not compatible with tight_layout.*",
+            category=UserWarning,
+        )
+        if fig is not None:
+            fig.tight_layout()
+        else:
+            plt.tight_layout()
+
+
 def build_notebook_figure_path(
     context: object,
     plot_type: str,
     *,
     alt_view: bool = False,
+    save_variant: str | None = None,
     model_type: str | None = None,
     notebook_dir: str | Path | None = None,
 ) -> Path:
@@ -108,6 +133,7 @@ def build_notebook_figure_path(
             with `.args` and Node2Vec-style contexts with `.config` fields.
         plot_type: One of `FIGURE_SUBFOLDERS`.
         alt_view: Whether to use the alternate embedding-view suffix.
+        save_variant: Optional short variant token for plots with the same type.
         model_type: Optional override for the model-type filename token.
         notebook_dir: Optional notebook directory. Defaults to current working
             directory, matching notebook-local artifact behavior.
@@ -149,8 +175,13 @@ def build_notebook_figure_path(
         tokens.append("self_edges")
 
     suffix = FIGURE_SUFFIXES[plot_type]
-    if plot_type == "embeddings" and alt_view:
-        suffix = "embedding_graph_alt_view"
+    if plot_type == "embeddings":
+        suffix_parts = ["embedding_graph"]
+        if save_variant:
+            suffix_parts.append(_token(save_variant))
+        if alt_view:
+            suffix_parts.append("alt_view")
+        suffix = "_".join(suffix_parts)
 
     root = Path(notebook_dir).resolve() if notebook_dir is not None else Path.cwd().resolve()
     figure_dir = root / "saved_artifacts" / "figures" / FIGURE_SUBFOLDERS[plot_type]
@@ -164,21 +195,36 @@ def save_figure_for_context(
     *,
     fig=None,
     alt_view: bool = False,
+    save_variant: str | None = None,
     model_type: str | None = None,
     notebook_dir: str | Path | None = None,
+    preserve_axes_positions: bool = False,
 ) -> Path:
-    """Tight-layouts and saves a figure with the deterministic notebook path."""
+    """Tight-layouts and saves a figure with the deterministic notebook path.
+
+    Args:
+        preserve_axes_positions: Restore axes bounds after tight-layout. This is
+            useful for 3D figures whose projected artists otherwise make the
+            tight bounding box collapse to a very small PDF page.
+    """
     path = build_notebook_figure_path(
         context=context,
         plot_type=plot_type,
         alt_view=alt_view,
+        save_variant=save_variant,
         model_type=model_type,
         notebook_dir=notebook_dir,
     )
     if fig is not None:
-        fig.tight_layout()
+        axes_positions = (
+            [ax.get_position().frozen() for ax in fig.axes] if preserve_axes_positions else None
+        )
+        apply_tight_layout(fig)
+        if axes_positions is not None:
+            for ax, position in zip(fig.axes, axes_positions):
+                ax.set_position(position)
         fig.savefig(path, dpi=300, bbox_inches="tight")
     else:
-        plt.tight_layout()
+        apply_tight_layout()
         plt.savefig(path, dpi=300, bbox_inches="tight")
     return path
