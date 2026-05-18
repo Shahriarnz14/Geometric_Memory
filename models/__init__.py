@@ -30,6 +30,7 @@ def _build_gpt_model(args):
         use_positional_encoding=args.use_positional_encoding,
         use_neural_net_mlp=args.use_mlp_only_blocks,
         use_weight_tying=args.tie_input_output_embeddings,
+        weight_init_mode=args.weight_init_mode,
     )
     return GPT(config)
 

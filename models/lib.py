@@ -106,6 +106,11 @@ class MLP_NeuralNet(nn.Module):
         super().__init__()
         self.config = config
         self.fc1 = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.fc1._geometric_memory_weight_init = getattr(
+            self.config,
+            "weight_init_mode",
+            "default",
+        )
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):

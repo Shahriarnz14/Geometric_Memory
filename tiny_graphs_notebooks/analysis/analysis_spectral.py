@@ -9,6 +9,8 @@ from typing import Mapping, Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 
+from tiny_graphs_notebooks.notebook_utils.figure_saving import save_figure_for_context
+
 
 def _slugify_plot_filename(filename: str) -> str:
     """Builds a filesystem-safe stem for saved plot filenames."""
@@ -48,9 +50,8 @@ def _compute_eigen_rotation_matrix(rotation_matrix: np.ndarray) -> tuple[np.ndar
     Returns:
         tuple[np.ndarray, np.ndarray]: Eigenvalues and row-wise eigenvectors.
     """
-    eigenvalues, eigenvectors = np.linalg.eig(rotation_matrix)
-    eigenvalues = np.real_if_close(eigenvalues, tol=1000)
-    eigenvectors = np.real_if_close(eigenvectors, tol=1000)
+    symmetric_matrix = 0.5 * (rotation_matrix + rotation_matrix.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(symmetric_matrix)
     sorted_indices = np.argsort(eigenvalues)
     eigenvalues = np.asarray(eigenvalues[sorted_indices], dtype=np.float64)
     eigenvectors = np.asarray(eigenvectors[:, sorted_indices], dtype=np.float64)
@@ -176,8 +177,14 @@ def compute_spectral_bias_from_state(
     norm_projections = filtered_projections / proj_den
 
     if len(norm_eigenvalues) > 1:
-        tie_buckets = np.round(norm_eigenvalues / max(eigenvalue_tie_tol, 1e-12)).astype(np.int64)
-        sorted_indices = np.lexsort((-norm_projections, -tie_buckets))
+        tie_tolerance = max(eigenvalue_tie_tol, 1e-12)
+        tie_buckets = np.round(norm_eigenvalues / tie_tolerance).astype(np.int64)
+        projection_tiebreak = np.where(
+            norm_eigenvalues < -tie_tolerance,
+            norm_projections,
+            -norm_projections,
+        )
+        sorted_indices = np.lexsort((projection_tiebreak, -tie_buckets))
         norm_eigenvalues = norm_eigenvalues[sorted_indices]
         norm_projections = norm_projections[sorted_indices]
 
@@ -201,6 +208,8 @@ def plot_spectral_bias(
     title: str = '',
     save: bool = False,
     filename: str | None = None,
+    save_context: object | None = None,
+    save_model_type: str | None = None,
     cutoff: int | None = None,
     figsize: tuple[float, float] = (15.0, 5.0),
     ylabel_fontsize: int = 28,
@@ -217,6 +226,8 @@ def plot_spectral_bias(
         title: Optional title.
         save: Whether to save the plot into the experiment logs folder.
         filename: Optional filename stem to use when saving.
+        save_context: Optional notebook section context for deterministic saves.
+        save_model_type: Optional override for the model-type filename token.
         cutoff: Optional x-axis truncation.
         figsize: Figure size.
         ylabel_fontsize: Y-axis label font size.
@@ -270,7 +281,7 @@ def plot_spectral_bias(
     ax.set_ylabel('Normalized Magnitude', fontsize=ylabel_fontsize)
     ax.set_xlabel('Eigenvector Index', fontsize=xlabel_fontsize)
     if title:
-        ax.set_title(title, fontsize=16)
+        ax.set_title(title, fontsize=16, pad=20, y=1.1, loc='right')
     ax.axhline(0, color='black', linewidth=0.8)
     ax.grid(axis='y', which='major', linestyle='-', linewidth=0.8, color='grey', alpha=0.7, zorder=1)
     ax.grid(axis='y', which='minor', linestyle=':', linewidth=0.6, color='grey', alpha=0.5, zorder=1)
@@ -282,15 +293,173 @@ def plot_spectral_bias(
     ax.tick_params(axis='y', labelsize=tick_fontsize)
 
     fig.tight_layout()
-    if save:
-        plot_dir = Path.cwd().resolve() / 'experiment_logs' / 'spectral_bias_plots'
-        plot_dir.mkdir(parents=True, exist_ok=True)
-        filename_stem = _slugify_plot_filename(filename or title or 'spectral_bias')
-        for extension in ('pdf', 'png'):
-            fig.savefig(
-                plot_dir / f'{filename_stem}.{extension}',
-                dpi=300,
-                bbox_inches='tight',
-            )
+    if save_context is not None:
+        save_figure_for_context(
+            save_context,
+            'spectral_bias_plots',
+            fig=fig,
+            model_type=save_model_type,
+        )
+    elif save:
+        # plot_dir = Path.cwd().resolve() / 'experiment_logs' / 'spectral_bias_plots'
+        # plot_dir.mkdir(parents=True, exist_ok=True)
+        # filename_stem = _slugify_plot_filename(filename or title or 'spectral_bias')
+        # for extension in ('pdf', 'png'):
+        #     fig.savefig(
+        #         plot_dir / f'{filename_stem}.{extension}',
+        #         dpi=300,
+        #         bbox_inches='tight',
+        #     )
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
     plt.show()
     return fig, ax
+
+
+# ============================================================================
+# Edge Margin and Accuracy Computation
+# ============================================================================
+
+import torch
+
+
+@torch.no_grad()
+def compute_skewed_low_rank_logits(model: torch.nn.Module) -> torch.Tensor:
+    """Compute skewed low-rank logits from model embeddings and weights.
+    
+    Args:
+        model: PyTorch model with embedding and middle layer.
+        
+    Returns:
+        torch.Tensor: Skewed logits matrix.
+    """
+    # Support both naming styles:
+    # 1) model.embedding / model.middle_layer
+    # 2) model.embed_tokens / model.layers[0].mlp.fc1
+    embedding_module = getattr(model, "embedding", None)
+    if embedding_module is None:
+        embedding_module = getattr(model, "embed_tokens")
+
+    middle_layer = getattr(model, "middle_layer", None)
+    if middle_layer is None:
+        middle_layer = model.layers[0].mlp.fc1
+
+    E = embedding_module.weight.detach()   # (N, D)
+    W = middle_layer.weight.detach()       # (D, D)
+
+    # SVD(E) = U S Vh
+    _, _, Vh = torch.linalg.svd(E, full_matrices=False)  # Vh: (K, D)
+
+    # lambdas = diag(Vh @ W @ Vh.T)
+    Vh_W_Vht = Vh @ W @ Vh.T
+    lambdas = torch.diag(Vh_W_Vht)
+
+    # W' = Vh.T @ diag(lambdas) @ Vh
+    W_prime = Vh.T @ torch.diag(lambdas) @ Vh
+
+    # logits = E @ W' @ E.T
+    logits = E @ W_prime @ E.T
+    return logits
+
+
+@torch.no_grad()
+def _build_edge_mask(node_count: int, edge_list, device: torch.device) -> torch.Tensor:
+    """Build boolean edge mask from edge list."""
+    edge_mask = torch.zeros((node_count, node_count), dtype=torch.bool, device=device)
+    for edge in edge_list:
+        if len(edge) < 2:
+            continue
+        src, dst = int(edge[0]), int(edge[1])
+        if 0 <= src < node_count and 0 <= dst < node_count:
+            edge_mask[src, dst] = True
+    return edge_mask
+
+
+@torch.no_grad()
+def _edge_margin(logits: torch.Tensor, edge_mask: torch.Tensor) -> float:
+    """Compute edge margin: max(true_edge_logits) - max(non_edge_logits).
+    
+    Excludes self-edges from both calculations.
+    """
+    node_count = logits.size(0)
+    no_self_edge = ~torch.eye(node_count, dtype=torch.bool, device=logits.device)
+
+    # Mask: true edges excluding self-edges
+    pos_mask = edge_mask & no_self_edge
+    # Mask: non-edges excluding self-edges
+    neg_mask = (~edge_mask) & no_self_edge
+
+    pos_exists = pos_mask.any(dim=1)
+    neg_exists = neg_mask.any(dim=1)
+    valid_rows = pos_exists & neg_exists
+
+    pos_scores = logits.masked_fill(~pos_mask, float("-inf")).max(dim=1).values
+    neg_scores = logits.masked_fill(~neg_mask, float("-inf")).max(dim=1).values
+
+    if not valid_rows.any():
+        return float("nan")
+
+    return (pos_scores[valid_rows] - neg_scores[valid_rows]).mean().item()
+
+
+@torch.no_grad()
+def _top1_edge_accuracy(logits: torch.Tensor, edge_mask: torch.Tensor) -> float:
+    """Compute top-1 edge prediction accuracy, excluding self-edge predictions."""
+    node_count = logits.size(0)
+    no_self_edge = ~torch.eye(node_count, dtype=torch.bool, device=logits.device)
+
+    # Only consider predictions for non-self positions
+    edge_mask_no_self = edge_mask & no_self_edge
+    valid_rows = edge_mask_no_self.any(dim=1)
+
+    if not valid_rows.any():
+        return float("nan")
+
+    preds = torch.argmax(logits, dim=-1)
+    # Check if predictions are actual edges (excluding self-edge predictions)
+    hits = edge_mask_no_self[torch.arange(logits.size(0), device=logits.device), preds]
+    return hits[valid_rows].float().mean().item() * 100.0
+
+
+@torch.no_grad()
+def compute_margin_and_accuracy(
+    model: torch.nn.Module,
+    edge_list,
+    label: str = "",
+) -> tuple[float, float, float]:
+    """Compute edge margin and accuracy for original and skewed logits.
+    
+    Args:
+        model: PyTorch model.
+        edge_list: Graph edge list.
+        label: Optional label for printing.
+        
+    Returns:
+        tuple[float, float, float]: (margin_original, margin_skewed, accuracy_skewed)
+    """
+    logits_skewed = compute_skewed_low_rank_logits(model)
+
+    embedding_module = getattr(model, "embedding", None)
+    if embedding_module is None:
+        embedding_module = getattr(model, "embed_tokens")
+
+    middle_layer = getattr(model, "middle_layer", None)
+    if middle_layer is None:
+        middle_layer = model.layers[0].mlp.fc1
+
+    E = embedding_module.weight.detach()
+    W = middle_layer.weight.detach()
+
+    # Original logits use the learned middle layer: E @ W @ E.T
+    logits_original = E @ W @ E.T
+
+    edge_mask = _build_edge_mask(logits_skewed.size(0), edge_list, logits_skewed.device)
+
+    margin_original = _edge_margin(logits_original, edge_mask)
+    margin_skewed = _edge_margin(logits_skewed, edge_mask)
+    accuracy_skewed = _top1_edge_accuracy(logits_skewed, edge_mask)
+
+    prefix = f"{label} | " if label else ""
+    print(f"{prefix}edge_margin_original: {margin_original:.6f}")
+    print(f"{prefix}edge_margin_skewed: {margin_skewed:.6f}")
+    print(f"{prefix}edge_top1_accuracy_skewed: {accuracy_skewed:.2f}%")
+    return margin_original, margin_skewed, accuracy_skewed

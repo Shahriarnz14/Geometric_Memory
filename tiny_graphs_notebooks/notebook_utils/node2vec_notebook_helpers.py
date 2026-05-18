@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
+import json
 from pathlib import Path
 from typing import Mapping
 
@@ -41,7 +43,6 @@ from tiny_graphs_notebooks.analysis.storage import (
     save_json,
     write_pickle,
 )
-from tiny_graphs_notebooks.notebook_utils.paths import get_tiny_graphs_root
 
 @dataclass
 class Node2VecSectionContext:
@@ -140,17 +141,13 @@ def _build_run_name(config: Mapping[str, object], seed: int) -> str:
     )
 
 
-def _artifact_dirs(context: Node2VecSectionContext) -> dict[str, Path]:
-    """Resolves and creates node2vec artifact directories.
-
-    Args:
-        context: Section context.
-
-    Returns:
-        dict[str, Path]: Named artifact directories.
-    """
-
-    root = get_tiny_graphs_root() / "saved_artifacts"
+def _artifact_dirs_for_root(
+    root: Path,
+    context: Node2VecSectionContext,
+    *,
+    create: bool,
+) -> dict[str, Path]:
+    """Resolves node2vec artifact directories for one artifact root."""
     graph_scope = str(context.graph_type)
     paths = {
         "root": root,
@@ -158,9 +155,97 @@ def _artifact_dirs(context: Node2VecSectionContext) -> dict[str, Path]:
         "pickles": root / "pickles" / graph_scope,
         "manifests": root / "manifests" / graph_scope,
     }
-    for path in paths.values():
-        path.mkdir(parents=True, exist_ok=True)
+    if create:
+        for key, path in paths.items():
+            if key != "root":
+                path.mkdir(parents=True, exist_ok=True)
     return paths
+
+
+def _artifact_dirs(context: Node2VecSectionContext) -> dict[str, Path]:
+    """Resolves and creates notebook-local node2vec artifact directories.
+
+    Args:
+        context: Section context.
+
+    Returns:
+        dict[str, Path]: Named artifact directories.
+    """
+    return _artifact_dirs_for_root(
+        Path.cwd().resolve() / "saved_artifacts",
+        context,
+        create=True,
+    )
+
+
+def _iter_artifact_dirs(context: Node2VecSectionContext) -> list[dict[str, Path]]:
+    """Returns artifact directories used by the current notebook-local layout."""
+    return [
+        _artifact_dirs_for_root(
+            Path.cwd().resolve() / "saved_artifacts",
+            context,
+            create=False,
+        )
+    ]
+
+
+def _canonical_identity_value(value: object) -> object:
+    """Normalizes values before putting them into checkpoint identities."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return f"{float(value):.15g}"
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
+
+
+def _canonical_identity(identity: Mapping[str, object]) -> dict[str, object]:
+    """Returns a JSON-stable identity dictionary."""
+    return {
+        str(key): _canonical_identity_value(value)
+        for key, value in sorted(identity.items(), key=lambda item: str(item[0]))
+    }
+
+
+def _checkpoint_identity_key(identity: Mapping[str, object]) -> str:
+    """Builds a stable key for a node2vec artifact identity."""
+    payload = json.dumps(
+        _canonical_identity(identity),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _node2vec_checkpoint_identity(context: Node2VecSectionContext) -> dict[str, object]:
+    """Builds the exact context identity required for node2vec auto-loading."""
+    config = context.config
+    identity = {
+        "model_family": "node2vec",
+        "model_variant": "tied",
+        "graph_type": context.graph_type,
+        "node_count": int(context.node_count),
+        "root_node_index": context.root_node_index,
+        "seed": int(context.seed),
+        "star_degree": config.get("star_degree"),
+        "path_length": config.get("path_length"),
+        "grid_rows": config.get("grid_rows"),
+        "grid_cols": config.get("grid_cols"),
+        "total_nodes": config.get("total_nodes"),
+        "irregular_edge_count": config.get("irregular_edge_count"),
+        "add_self_edges": bool(config.get("add_self_edges", False)),
+        "embedding_dim": config.get("embedding_dim"),
+        "learning_rate": config.get("learning_rate"),
+        "num_epochs": config.get("num_epochs"),
+        "neg_samples_per_pos": config.get("neg_samples_per_pos"),
+        "use_full_softmax_objective": bool(config.get("use_full_softmax_objective", True)),
+        "embedding_checkpoint_interval": config.get("embedding_checkpoint_interval"),
+        "top_k": config.get("top_k"),
+    }
+    return _canonical_identity(identity)
 
 
 def _is_node2vec_manifest(payload: Mapping[str, object]) -> bool:
@@ -172,80 +257,77 @@ def _is_node2vec_manifest(payload: Mapping[str, object]) -> bool:
     Returns:
         bool: True for node2vec manifests.
     """
-    payload_family = str(payload.get("model_family", "")).strip()
-    if payload_family:
-        return payload_family == 'node2vec'
-
-    # Backfill for older manifests without `model_family` metadata.
-    run_name = str(payload.get("run_name", ""))
-    checkpoint_name = Path(str(payload.get("checkpoint_path", ""))).name
-    return run_name.startswith('node2vec_') or checkpoint_name.startswith('node2vec_')
+    return str(payload.get("model_family", "")).strip() == 'node2vec'
 
 
 def _manifest_matches_node2vec_context(
     payload: Mapping[str, object],
     context: Node2VecSectionContext,
 ) -> bool:
-    """Checks whether a node2vec manifest matches the current self-edge variant."""
+    """Checks whether a node2vec manifest matches the exact current identity."""
     if not _is_node2vec_manifest(payload):
         return False
 
-    expected_self_edges = bool(context.config.get("add_self_edges", False))
-    if "add_self_edges" in payload:
-        return bool(payload.get("add_self_edges", False)) == expected_self_edges
+    expected_identity = _node2vec_checkpoint_identity(context)
+    expected_key = _checkpoint_identity_key(expected_identity)
+    payload_key = str(payload.get("checkpoint_identity_key", "")).strip()
+    if payload_key:
+        return payload_key == expected_key
 
-    run_name = str(payload.get("run_name", ""))
-    expected_token = f"_selfedge{int(expected_self_edges)}_"
-    if expected_self_edges:
-        return expected_token in run_name
-    return expected_token in run_name or "_selfedge1_" not in run_name
+    payload_identity = payload.get("checkpoint_identity")
+    if isinstance(payload_identity, Mapping):
+        return _checkpoint_identity_key(payload_identity) == expected_key
+
+    return False
 
 
 def _find_latest_node2vec_manifest(
-    manifest_dir: Path,
     context: Node2VecSectionContext,
 ) -> Path | None:
-    """Finds the newest node2vec manifest in a graph-scoped manifest directory.
-
-    Args:
-        manifest_dir: Directory containing graph-scoped manifests.
+    """Finds the newest node2vec manifest for the current identity.
 
     Returns:
         Path | None: Most recent compatible manifest or None.
     """
-    matched: list[Path] = []
-    for manifest_path in manifest_dir.glob('*.json'):
-        payload = load_json(manifest_path)
-        if _manifest_matches_node2vec_context(payload, context):
-            matched.append(manifest_path)
-    if not matched:
-        return None
-    matched.sort(key=lambda p: p.stat().st_mtime)
-    return matched[-1]
+    for dirs in _iter_artifact_dirs(context):
+        manifest_dir = dirs["manifests"]
+        if not manifest_dir.exists():
+            continue
+        local_matches: list[Path] = []
+        for manifest_path in manifest_dir.glob('*.json'):
+            payload = load_json(manifest_path)
+            if _manifest_matches_node2vec_context(payload, context):
+                local_matches.append(manifest_path)
+        local_matches.sort(key=lambda p: p.stat().st_mtime)
+        if local_matches:
+            return local_matches[-1]
+    return None
 
 
 def _find_node2vec_manifest_by_checkpoint(
-    manifest_dir: Path,
     checkpoint_path: str,
     context: Node2VecSectionContext,
 ) -> Path | None:
     """Finds a node2vec manifest whose checkpoint path matches the input path.
 
     Args:
-        manifest_dir: Directory containing graph-scoped manifests.
         checkpoint_path: Checkpoint path to resolve.
 
     Returns:
         Path | None: Matching manifest path or None.
     """
     checkpoint_resolved = str(Path(checkpoint_path).resolve())
-    for manifest_path in manifest_dir.glob('*.json'):
-        payload = load_json(manifest_path)
-        if not _manifest_matches_node2vec_context(payload, context):
+    for dirs in _iter_artifact_dirs(context):
+        manifest_dir = dirs["manifests"]
+        if not manifest_dir.exists():
             continue
-        payload_checkpoint = str(Path(str(payload.get('checkpoint_path', ''))).resolve())
-        if payload_checkpoint == checkpoint_resolved:
-            return manifest_path
+        for manifest_path in manifest_dir.glob('*.json'):
+            payload = load_json(manifest_path)
+            if not _manifest_matches_node2vec_context(payload, context):
+                continue
+            payload_checkpoint = str(Path(str(payload.get('checkpoint_path', ''))).resolve())
+            if payload_checkpoint == checkpoint_resolved:
+                return manifest_path
     return None
 
 
@@ -402,11 +484,14 @@ def _persist_artifacts(
     write_pickle(topk_history_path, topk_history)
     write_pickle(final_embeddings_path, context.model.weight.detach().cpu().numpy().copy())
 
+    checkpoint_identity = _node2vec_checkpoint_identity(context)
     manifest_payload = {
         "run_name": context.run_name,
         "graph_type": context.graph_type,
         "model_family": "node2vec",
         "model_variant": "tied",
+        "checkpoint_identity": checkpoint_identity,
+        "checkpoint_identity_key": _checkpoint_identity_key(checkpoint_identity),
         "add_self_edges": bool(context.config.get("add_self_edges", False)),
         "seed": int(context.seed),
         "config": context.config,
@@ -452,10 +537,11 @@ def train_or_load_node2vec_model(
     resolved_checkpoint = checkpoint_path.strip()
     manifest_payload: dict[str, object] | None = None
     if not resolved_checkpoint:
-        latest_manifest = _find_latest_node2vec_manifest(dirs["manifests"], context)
+        latest_manifest = _find_latest_node2vec_manifest(context)
         if latest_manifest is None:
             raise ValueError(
-                "No prior node2vec manifest found. Set train_from_scratch=True "
+                "No prior node2vec manifest found for this exact checkpoint identity. "
+                "Set train_from_scratch=True "
                 "or provide checkpoint_path explicitly."
             )
         manifest_payload = load_json(latest_manifest)
@@ -471,7 +557,6 @@ def train_or_load_node2vec_model(
 
     if manifest_payload is None:
         matched_manifest = _find_node2vec_manifest_by_checkpoint(
-            dirs["manifests"],
             resolved_checkpoint,
             context,
         )

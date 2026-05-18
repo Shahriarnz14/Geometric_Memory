@@ -142,6 +142,16 @@ def get_args(args_list=None):
         help="Use single MLP blocks instead of transformer-style MLP.",
     )
     parser.add_argument(
+        "--weight_init_mode",
+        type=str,
+        default="default",
+        choices=["default", "non_geometric"],
+        help=(
+            "Weight initialization mode for the model. "
+            "'default' keeps the original GPT-style init; 'non_geometric' only uses unit-normal embedding/lm_head init."
+        ),
+    )
+    parser.add_argument(
         "--track_embedding_evolution",
         action="store_true",
         help="Record node embedding evolution during edge memorization.",

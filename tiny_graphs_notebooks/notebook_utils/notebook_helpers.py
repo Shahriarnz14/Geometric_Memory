@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 import shutil
 from typing import Mapping, Sequence
@@ -57,14 +59,13 @@ from tiny_graphs_notebooks.notebook_utils.experiment_utils import (
     compute_topk_recovery_percent,
 )
 from tiny_graphs_notebooks.notebook_utils.paths import (
-    get_tiny_graphs_root,
     resolve_from_cwd,
     resolve_from_tiny_graphs_root,
 )
 
 
 @dataclass
-class TransformerSectionContext:
+class TinyDeepSequenceModelContext:
     """Container for one notebook section runtime state.
 
     Args:
@@ -85,6 +86,8 @@ class TransformerSectionContext:
         topk_history_path: Optional saved top-k prediction pickle path.
         final_embeddings_path: Optional saved final-embeddings pickle path.
         manifest_path: Optional saved run-manifest JSON path.
+        artifact_model_type: Optional notebook-facing model type override used
+            to keep saved artifacts distinct when notebooks share a directory.
     """
 
     args: object
@@ -104,6 +107,14 @@ class TransformerSectionContext:
     topk_history_path: str = ""
     final_embeddings_path: str = ""
     manifest_path: str = ""
+    artifact_model_type: str = ""
+
+
+NOTEBOOK_ONLY_CONFIG_KEYS = {
+    "artifact_model_type",
+    "save_model_type",
+    "__artifact_model_type",
+}
 
 
 def args_dict_to_cli_list(args_dict: Mapping[str, object]) -> list[str]:
@@ -117,6 +128,8 @@ def args_dict_to_cli_list(args_dict: Mapping[str, object]) -> list[str]:
     """
     cli_args: list[str] = []
     for key, value in args_dict.items():
+        if key in NOTEBOOK_ONLY_CONFIG_KEYS:
+            continue
         if isinstance(value, bool):
             if value:
                 cli_args.append(key)
@@ -204,12 +217,12 @@ def _normalize_runtime_paths(args):
     return args
 
 
-def build_transformer_section_context(
+def build_tiny_deep_sequence_model_context(
     cli_config: Mapping[str, object],
     seed: int,
     *,
     dataset_overwrite: bool = False,
-):
+) -> TinyDeepSequenceModelContext:
     """Builds full section context: args, files, datasets, model, and loaders.
 
     Args:
@@ -218,11 +231,19 @@ def build_transformer_section_context(
         dataset_overwrite: Whether to overwrite dataset files.
 
     Returns:
-        TransformerSectionContext: Prepared section context object.
+        TinyDeepSequenceModelContext: Prepared section context object.
     """
     set_all_seeds(seed)
 
+    artifact_model_type = str(
+        cli_config.get("artifact_model_type")
+        or cli_config.get("save_model_type")
+        or cli_config.get("__artifact_model_type")
+        or ""
+    ).strip()
     args = _normalize_runtime_paths(get_args(args_dict_to_cli_list(cli_config)))
+    args.artifact_model_type = artifact_model_type
+    args.notebook_seed = int(seed)
     device = resolve_default_device()
     tokenizer = get_tokenizer(args)
     args.device = device
@@ -313,7 +334,7 @@ def build_transformer_section_context(
 
     model = get_model(args).to(device)
 
-    return TransformerSectionContext(
+    return TinyDeepSequenceModelContext(
         args=args,
         device=device,
         tokenizer=tokenizer,
@@ -327,11 +348,12 @@ def build_transformer_section_context(
         path_train_loader=path_train_loader,
         path_test_loader=path_test_loader,
         checkpoint_path="",
+        artifact_model_type=artifact_model_type,
     )
 
 
-# Shared aliases for future non-transformer tiny-graph notebooks.
-NotebookSectionContext = TransformerSectionContext
+# Generic type alias for notebook code that does not care about model family.
+NotebookSectionContext = TinyDeepSequenceModelContext
 
 
 def build_section_context(
@@ -339,7 +361,7 @@ def build_section_context(
     seed: int,
     *,
     dataset_overwrite: bool = False,
-) -> TransformerSectionContext:
+) -> TinyDeepSequenceModelContext:
     """Builds a generic tiny-graph notebook section context.
 
     Args:
@@ -348,9 +370,9 @@ def build_section_context(
         dataset_overwrite: Whether to overwrite dataset files.
 
     Returns:
-        TransformerSectionContext: Prepared section context object.
+        TinyDeepSequenceModelContext: Prepared section context object.
     """
-    return build_transformer_section_context(
+    return build_tiny_deep_sequence_model_context(
         cli_config=cli_config,
         seed=seed,
         dataset_overwrite=dataset_overwrite,
@@ -358,28 +380,53 @@ def build_section_context(
 
 
 def _tiny_notebook_artifact_root() -> Path:
-    """Returns the base folder for notebook checkpoints and plot pickles."""
-    return get_tiny_graphs_root() / "saved_artifacts"
+    """Returns the per-notebook-directory artifact root."""
+    return Path.cwd().resolve() / "saved_artifacts"
 
 
-def _tiny_notebook_artifact_dirs(context: TransformerSectionContext) -> dict[str, Path]:
-    """Builds and creates tiny-notebook artifact directories for this graph scope."""
+def _tiny_notebook_artifact_dirs_for_root(
+    artifact_root: Path,
+    context: TinyDeepSequenceModelContext,
+    *,
+    create: bool,
+) -> dict[str, Path]:
+    """Builds artifact directories for a specific root and graph scope."""
     graph_scope = str(context.args.graph_type)
-    root = _tiny_notebook_artifact_root()
-    checkpoint_dir = root / "checkpoints" / graph_scope
-    pickle_dir = root / "pickles" / graph_scope
-    manifest_dir = root / "manifests" / graph_scope
-    for path in (checkpoint_dir, pickle_dir, manifest_dir):
-        path.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = artifact_root / "checkpoints" / graph_scope
+    pickle_dir = artifact_root / "pickles" / graph_scope
+    manifest_dir = artifact_root / "manifests" / graph_scope
+    if create:
+        for path in (checkpoint_dir, pickle_dir, manifest_dir):
+            path.mkdir(parents=True, exist_ok=True)
     return {
-        "root": root,
+        "root": artifact_root,
         "checkpoint_dir": checkpoint_dir,
         "pickle_dir": pickle_dir,
         "manifest_dir": manifest_dir,
     }
 
 
-def _embedding_history_source_path(context: TransformerSectionContext) -> Path | None:
+def _tiny_notebook_artifact_dirs(context: TinyDeepSequenceModelContext) -> dict[str, Path]:
+    """Builds and creates local tiny-notebook artifact directories for this graph scope."""
+    return _tiny_notebook_artifact_dirs_for_root(
+        _tiny_notebook_artifact_root(),
+        context,
+        create=True,
+    )
+
+
+def _iter_tiny_notebook_artifact_dirs(context: TinyDeepSequenceModelContext) -> list[dict[str, Path]]:
+    """Returns artifact directories used by the current notebook-local layout."""
+    return [
+        _tiny_notebook_artifact_dirs_for_root(
+            _tiny_notebook_artifact_root(),
+            context,
+            create=False,
+        )
+    ]
+
+
+def _embedding_history_source_path(context: TinyDeepSequenceModelContext) -> Path | None:
     """Returns the trainer-generated embedding-history pickle path if available."""
     if not context.args.track_embedding_evolution:
         return None
@@ -387,7 +434,7 @@ def _embedding_history_source_path(context: TransformerSectionContext) -> Path |
     return candidate if candidate.exists() else None
 
 
-def _topk_prediction_source_path(context: TransformerSectionContext) -> Path | None:
+def _topk_prediction_source_path(context: TinyDeepSequenceModelContext) -> Path | None:
     """Returns the trainer-generated top-k prediction pickle path if available."""
     if not context.args.track_top_k_predictions:
         return None
@@ -395,7 +442,7 @@ def _topk_prediction_source_path(context: TransformerSectionContext) -> Path | N
     return candidate if candidate.exists() else None
 
 
-def _build_topk_predictions_snapshot(context: TransformerSectionContext) -> dict[int, object]:
+def _build_topk_predictions_snapshot(context: TinyDeepSequenceModelContext) -> dict[int, object]:
     """Builds a fallback top-k snapshot when trainer top-k history is unavailable."""
     prefix_strings = build_edge_prefix_strings_for_all_nodes(context.args)
     x_topk = build_batched_prefix_tensor(context.tokenizer, context.device, prefix_strings)
@@ -403,11 +450,136 @@ def _build_topk_predictions_snapshot(context: TransformerSectionContext) -> dict
     return {-1: topk_predictions}
 
 
+def _canonical_identity_value(value: object) -> object:
+    """Normalizes values before putting them into checkpoint identities."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return f"{float(value):.15g}"
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
+
+
+def _canonical_identity(identity: Mapping[str, object]) -> dict[str, object]:
+    """Returns a JSON-stable identity dictionary."""
+    return {
+        str(key): _canonical_identity_value(value)
+        for key, value in sorted(identity.items(), key=lambda item: str(item[0]))
+    }
+
+
+def _checkpoint_identity_key(identity: Mapping[str, object]) -> str:
+    """Builds a stable short-independent key for an artifact identity."""
+    payload = json.dumps(
+        _canonical_identity(identity),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _arg_identity(args: object, name: str, default: object = None) -> object:
+    return _canonical_identity_value(getattr(args, name, default))
+
+
+def _sequence_model_artifact_model_type(context: TinyDeepSequenceModelContext) -> str:
+    """Returns the notebook-facing model type stored in checkpoint manifests."""
+    override = str(
+        getattr(context, "artifact_model_type", "")
+        or getattr(context.args, "artifact_model_type", "")
+        or ""
+    ).strip()
+    if override:
+        return override
+
+    architecture = str(getattr(context.args, "model_architecture_label", "") or "").strip()
+    if architecture:
+        return architecture
+    return str(getattr(context.args, "model_family", "model"))
+
+
+def _sequence_model_checkpoint_identity(context: TinyDeepSequenceModelContext) -> dict[str, object]:
+    """Builds the exact context identity required for checkpoint auto-loading."""
+    args = context.args
+    identity = {
+        "artifact_model_type": _sequence_model_artifact_model_type(context),
+        "seed": _arg_identity(args, "notebook_seed"),
+        "graph_type": _arg_identity(args, "graph_type"),
+        "total_nodes": _arg_identity(args, "total_nodes"),
+        "path_length": _arg_identity(args, "path_length"),
+        "star_degree": _arg_identity(args, "star_degree"),
+        "star_subtree_degree": _arg_identity(args, "star_subtree_degree"),
+        "grid_rows": _arg_identity(args, "grid_rows"),
+        "grid_cols": _arg_identity(args, "grid_cols"),
+        "irregular_edge_count": _arg_identity(args, "irregular_edge_count"),
+        "train_split_ratio": _arg_identity(args, "train_split_ratio"),
+        "split_subtree_holdout": _arg_identity(args, "split_subtree_holdout", False),
+        "model_family": _arg_identity(args, "model_family"),
+        "model_architecture_label": _arg_identity(args, "model_architecture_label"),
+        "transformer_layer_count": _arg_identity(args, "transformer_layer_count"),
+        "embedding_dimension": _arg_identity(args, "embedding_dimension"),
+        "attention_head_count": _arg_identity(args, "attention_head_count"),
+        "dropout_rate": _arg_identity(args, "dropout_rate", 0.0),
+        "use_attention": _arg_identity(args, "use_attention", True),
+        "use_residual_connections": _arg_identity(args, "use_residual_connections", True),
+        "use_layer_norm": _arg_identity(args, "use_layer_norm", True),
+        "use_positional_encoding": _arg_identity(args, "use_positional_encoding", True),
+        "tie_input_output_embeddings": _arg_identity(args, "tie_input_output_embeddings", True),
+        "freeze_token_embeddings": _arg_identity(args, "freeze_token_embeddings", False),
+        "use_mlp_only_blocks": _arg_identity(args, "use_mlp_only_blocks", False),
+        "weight_init_mode": _arg_identity(args, "weight_init_mode", "default"),
+        "mamba_state_dimension": _arg_identity(args, "mamba_state_dimension", None),
+        "mamba_convolution_kernel": _arg_identity(args, "mamba_convolution_kernel", None),
+        "mamba_expand_factor": _arg_identity(args, "mamba_expand_factor", None),
+        "add_forward_edges": _arg_identity(args, "add_forward_edges", False),
+        "add_backward_edges": _arg_identity(args, "add_backward_edges", False),
+        "add_self_edges": _arg_identity(args, "add_self_edges", False),
+        "use_directional_edge_pretraining": _arg_identity(
+            args,
+            "use_directional_edge_pretraining",
+            False,
+        ),
+        "include_start_node_in_path_finetuning": _arg_identity(
+            args,
+            "include_start_node_in_path_finetuning",
+            False,
+        ),
+        "include_task_token_in_prefix": _arg_identity(args, "include_task_token_in_prefix", True),
+        "edge_memorization_drop_pause_token": _arg_identity(
+            args,
+            "edge_memorization_drop_pause_token",
+            True,
+        ),
+        "edge_memorization_learning_rate": _arg_identity(
+            args,
+            "edge_memorization_learning_rate",
+        ),
+        "optimizer_weight_decay": _arg_identity(args, "optimizer_weight_decay", 0.0),
+        "edge_memorization_batch_size": _arg_identity(args, "edge_memorization_batch_size"),
+        "edge_memorization_epochs": _arg_identity(args, "edge_memorization_epochs"),
+        "edge_memorization_warmup_steps": _arg_identity(args, "edge_memorization_warmup_steps"),
+        "disable_edge_memorization_lr_decay": _arg_identity(
+            args,
+            "disable_edge_memorization_lr_decay",
+            False,
+        ),
+        "enable_edge_memorization_early_stopping": _arg_identity(
+            args,
+            "enable_edge_memorization_early_stopping",
+            False,
+        ),
+    }
+    return _canonical_identity(identity)
+
+
 def _persist_notebook_run_artifacts(
-    context: TransformerSectionContext,
+    context: TinyDeepSequenceModelContext,
     checkpoint_source_path: str,
 ) -> dict[str, str]:
-    """Persists checkpoint and plotting pickles inside `tiny_graphs_notebooks/saved_artifacts`.
+    """Persists checkpoint and plotting pickles inside local notebook `saved_artifacts`.
 
     Args:
         context: Prepared notebook section context.
@@ -454,13 +626,28 @@ def _persist_notebook_run_artifacts(
         write_pickle(topk_predictions_target, _build_topk_predictions_snapshot(context))
 
     manifest_target = dirs["manifest_dir"] / f"{run_name}.json"
+    checkpoint_identity = _sequence_model_checkpoint_identity(context)
     manifest_payload = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_name": run_name,
         "graph_type": str(context.args.graph_type),
         "model_family": str(context.args.model_family),
         "model_architecture_label": str(getattr(context.args, "model_architecture_label", "")),
+        "artifact_model_type": _sequence_model_artifact_model_type(context),
+        "seed": int(getattr(context.args, "notebook_seed", 0)),
+        "checkpoint_identity": checkpoint_identity,
+        "checkpoint_identity_key": _checkpoint_identity_key(checkpoint_identity),
+        "add_forward_edges": bool(getattr(context.args, "add_forward_edges", False)),
+        "add_backward_edges": bool(getattr(context.args, "add_backward_edges", False)),
         "add_self_edges": bool(getattr(context.args, "add_self_edges", False)),
+        "weight_init_mode": str(getattr(context.args, "weight_init_mode", "default")),
+        "edge_memorization_learning_rate": float(
+            getattr(context.args, "edge_memorization_learning_rate", 0.0)
+        ),
+        "dropout_rate": float(getattr(context.args, "dropout_rate", 0.0) or 0.0),
+        "optimizer_weight_decay": float(
+            getattr(context.args, "optimizer_weight_decay", 0.0) or 0.0
+        ),
         "checkpoint_path": str(checkpoint_target),
         "embedding_history_path": str(embedding_history_target),
         "topk_predictions_path": str(topk_predictions_target),
@@ -483,106 +670,101 @@ def _persist_notebook_run_artifacts(
     }
 
 
-def _manifest_matches_transformer_context(
+def _manifest_matches_sequence_model_context(
     payload: Mapping[str, object],
-    context: TransformerSectionContext,
+    context: TinyDeepSequenceModelContext,
 ) -> bool:
-    """Checks whether a manifest belongs to the current transformer model family.
+    """Checks whether a manifest exactly matches the current checkpoint identity.
 
     Args:
         payload: Manifest JSON payload.
-        context: Transformer section context.
+        context: Tiny deep sequence model section context.
 
     Returns:
         bool: True when the manifest is compatible with this context.
     """
-    expected_family = str(context.args.model_family)
-    expected_architecture = str(getattr(context.args, "model_architecture_label", "")).strip()
-    expected_self_edges = bool(getattr(context.args, "add_self_edges", False))
-    payload_family = str(payload.get("model_family", "")).strip()
-    payload_architecture = str(payload.get("model_architecture_label", "")).strip()
-    payload_self_edges = bool(payload.get("add_self_edges", False))
-    if payload_family:
-        if payload_family != expected_family or payload_self_edges != expected_self_edges:
-            return False
-        if payload_architecture:
-            return payload_architecture == expected_architecture
-        # Backfill for older manifests that may miss `model_architecture_label`.
-        run_name = str(payload.get("run_name", ""))
-        return f"_{expected_architecture}_" in run_name
+    expected_identity = _sequence_model_checkpoint_identity(context)
+    expected_key = _checkpoint_identity_key(expected_identity)
+    payload_key = str(payload.get("checkpoint_identity_key", "")).strip()
+    if payload_key:
+        return payload_key == expected_key
 
-    # Backfill for older manifests that may miss `model_family`.
-    run_name = str(payload.get("run_name", ""))
-    family_matches = f"_{expected_family}-" in run_name or run_name.startswith(f"{expected_family}_")
-    architecture_matches = f"_{expected_architecture}_" in run_name
-    self_edge_token = f"-selfedge{int(expected_self_edges)}"
-    if expected_self_edges:
-        return family_matches and architecture_matches and self_edge_token in run_name
-    return (
-        family_matches
-        and architecture_matches
-        and (self_edge_token in run_name or "-selfedge1" not in run_name)
-    )
+    payload_identity = payload.get("checkpoint_identity")
+    if isinstance(payload_identity, Mapping):
+        return _checkpoint_identity_key(payload_identity) == expected_key
+
+    return False
 
 
-def _find_latest_manifest_path(context: TransformerSectionContext) -> Path | None:
+def _find_latest_manifest_path(context: TinyDeepSequenceModelContext) -> Path | None:
     """Finds the newest compatible manifest for the current graph/model scope."""
-    manifest_dir = _tiny_notebook_artifact_dirs(context)["manifest_dir"]
-    matched: list[Path] = []
-    for manifest_path in manifest_dir.glob('*.json'):
-        payload = load_json(manifest_path)
-        if _manifest_matches_transformer_context(payload, context):
-            matched.append(manifest_path)
-    if not matched:
-        return None
-    matched.sort(key=lambda p: p.stat().st_mtime)
-    return matched[-1]
-
-
-def _find_manifest_by_checkpoint(
-    context: TransformerSectionContext,
-    checkpoint_path: str,
-) -> Path | None:
-    """Finds a compatible manifest that references a given checkpoint path."""
-    manifest_dir = _tiny_notebook_artifact_dirs(context)["manifest_dir"]
-    checkpoint_resolved = str(Path(checkpoint_path).resolve())
-    for manifest_path in manifest_dir.glob('*.json'):
-        payload = load_json(manifest_path)
-        if not _manifest_matches_transformer_context(payload, context):
+    for dirs in _iter_tiny_notebook_artifact_dirs(context):
+        manifest_dir = dirs["manifest_dir"]
+        if not manifest_dir.exists():
             continue
-        payload_checkpoint = str(Path(str(payload.get('checkpoint_path', ''))).resolve())
-        if payload_checkpoint == checkpoint_resolved:
-            return manifest_path
+        matched: list[Path] = []
+        for manifest_path in manifest_dir.glob('*.json'):
+            payload = load_json(manifest_path)
+            if _manifest_matches_sequence_model_context(payload, context):
+                matched.append(manifest_path)
+        if matched:
+            matched.sort(key=lambda p: p.stat().st_mtime)
+            return matched[-1]
     return None
 
 
-def _iter_transformer_manifest_candidates(context: TransformerSectionContext) -> list[Path]:
-    """Returns compatible transformer manifests sorted newest-first.
+def _find_manifest_by_checkpoint(
+    context: TinyDeepSequenceModelContext,
+    checkpoint_path: str,
+) -> Path | None:
+    """Finds a compatible manifest that references a given checkpoint path."""
+    checkpoint_resolved = str(Path(checkpoint_path).resolve())
+    for dirs in _iter_tiny_notebook_artifact_dirs(context):
+        manifest_dir = dirs["manifest_dir"]
+        if not manifest_dir.exists():
+            continue
+        for manifest_path in manifest_dir.glob('*.json'):
+            payload = load_json(manifest_path)
+            if not _manifest_matches_sequence_model_context(payload, context):
+                continue
+            payload_checkpoint = str(Path(str(payload.get('checkpoint_path', ''))).resolve())
+            if payload_checkpoint == checkpoint_resolved:
+                return manifest_path
+    return None
+
+
+def _iter_sequence_model_manifest_candidates(context: TinyDeepSequenceModelContext) -> list[Path]:
+    """Returns compatible sequence-model manifests sorted newest-first.
 
     Args:
-        context: Transformer section context.
+        context: Tiny deep sequence model section context.
 
     Returns:
         list[Path]: Candidate manifest paths ordered by recency.
     """
-    manifest_dir = _tiny_notebook_artifact_dirs(context)["manifest_dir"]
     matched: list[Path] = []
-    for manifest_path in manifest_dir.glob('*.json'):
-        payload = load_json(manifest_path)
-        if _manifest_matches_transformer_context(payload, context):
-            matched.append(manifest_path)
-    matched.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for dirs in _iter_tiny_notebook_artifact_dirs(context):
+        manifest_dir = dirs["manifest_dir"]
+        if not manifest_dir.exists():
+            continue
+        local_matches: list[Path] = []
+        for manifest_path in manifest_dir.glob('*.json'):
+            payload = load_json(manifest_path)
+            if _manifest_matches_sequence_model_context(payload, context):
+                local_matches.append(manifest_path)
+        local_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        matched.extend(local_matches)
     return matched
 
 
 def _load_checkpoint_state_dict(
-    context: TransformerSectionContext,
+    context: TinyDeepSequenceModelContext,
     checkpoint_path: str,
 ) -> None:
     """Loads model weights from a checkpoint path into the current context model.
 
     Args:
-        context: Transformer section context.
+        context: Tiny deep sequence model section context.
         checkpoint_path: Path to checkpoint file.
 
     Returns:
@@ -592,13 +774,13 @@ def _load_checkpoint_state_dict(
     context.model.to(context.device)
 
 
-def _load_latest_compatible_transformer_checkpoint(
-    context: TransformerSectionContext,
+def _load_latest_compatible_sequence_model_checkpoint(
+    context: TinyDeepSequenceModelContext,
 ) -> tuple[str, dict[str, object]]:
     """Loads the newest manifest checkpoint that is state-dict compatible.
 
     Args:
-        context: Transformer section context.
+        context: Tiny deep sequence model section context.
 
     Returns:
         tuple[str, dict[str, object]]: Loaded checkpoint path and manifest payload.
@@ -606,10 +788,10 @@ def _load_latest_compatible_transformer_checkpoint(
     Raises:
         RuntimeError: If no compatible checkpoint can be loaded.
     """
-    candidates = _iter_transformer_manifest_candidates(context)
+    candidates = _iter_sequence_model_manifest_candidates(context)
     if not candidates:
         raise RuntimeError(
-            "No transformer manifests found for this graph scope/model family. "
+            "No sequence-model manifests found for this exact checkpoint identity. "
             "Train once with train_from_scratch=True, or set checkpoint_path explicitly."
         )
 
@@ -633,14 +815,14 @@ def _load_latest_compatible_transformer_checkpoint(
 
     summary = "\n".join(errors[:5])
     raise RuntimeError(
-        "No compatible transformer checkpoint found in manifests for this graph scope. "
+        "No exact sequence-model checkpoint could be loaded for this checkpoint identity. "
         "Consider retraining or pass checkpoint_path explicitly.\n"
         f"Sample load errors:\n{summary}"
     )
 
 
 def _resolve_checkpoint_for_loading(
-    context: TransformerSectionContext,
+    context: TinyDeepSequenceModelContext,
     checkpoint_path: str,
 ) -> tuple[str, dict[str, object] | None]:
     """Resolves a checkpoint path for load mode.
@@ -661,7 +843,7 @@ def _resolve_checkpoint_for_loading(
     latest_manifest_path = _find_latest_manifest_path(context)
     if latest_manifest_path is None:
         raise ValueError(
-            "No saved checkpoint manifest found for this graph scope. "
+            "No saved checkpoint manifest found for this exact checkpoint identity. "
             "Train once with train_from_scratch=True, or set checkpoint_path explicitly."
         )
 
@@ -675,7 +857,7 @@ def _resolve_checkpoint_for_loading(
 
 
 def train_or_load_edge_model(
-    context: TransformerSectionContext,
+    context: TinyDeepSequenceModelContext,
     *,
     train_from_scratch: bool,
     checkpoint_path: str = "",
@@ -714,7 +896,7 @@ def train_or_load_edge_model(
             )
             _load_checkpoint_state_dict(context, resolved_checkpoint)
         else:
-            resolved_checkpoint, manifest_payload = _load_latest_compatible_transformer_checkpoint(
+            resolved_checkpoint, manifest_payload = _load_latest_compatible_sequence_model_checkpoint(
                 context=context,
             )
 
@@ -734,7 +916,7 @@ def train_or_load_edge_model(
     return persisted_paths["checkpoint"]
 
 
-def evaluate_edge_and_path(context: TransformerSectionContext) -> dict[str, float]:
+def evaluate_edge_and_path(context: TinyDeepSequenceModelContext) -> dict[str, float]:
     """Runs edge evaluation, top-k recovery, and path train/test evaluation.
 
     Args:
@@ -846,7 +1028,7 @@ def infer_root_node_index(edge_list: Sequence[tuple[int, int]]) -> int | None:
     return max(out_degree.items(), key=lambda item: item[1])[0]
 
 
-def collect_embeddings_and_edges(context: TransformerSectionContext):
+def collect_embeddings_and_edges(context: TinyDeepSequenceModelContext):
     """Collects model node embeddings, edge list, and root-node guess.
 
     Args:
@@ -862,7 +1044,7 @@ def collect_embeddings_and_edges(context: TransformerSectionContext):
 
 
 def load_analysis_histories(
-    context: TransformerSectionContext,
+    context: TinyDeepSequenceModelContext,
     edge_list: Sequence[tuple[int, int]],
     *,
     embedding_history_path: str = "",

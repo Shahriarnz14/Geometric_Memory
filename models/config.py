@@ -67,6 +67,7 @@ class GPTConfig:
     use_neural_net_mlp: bool = False
     freeze_embeddings: bool = False
     use_weight_tying: bool = True
+    weight_init_mode: str = "default"
 
 
 @dataclass
