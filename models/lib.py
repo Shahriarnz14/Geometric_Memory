@@ -106,8 +106,7 @@ class MLP_NeuralNet(nn.Module):
         super().__init__()
         self.config = config
         weight_init_mode = getattr(config, "weight_init_mode", "default")
-        use_bias = False if weight_init_mode == "non_geometric" else config.bias
-        self.fc1 = nn.Linear(config.n_embd, config.n_embd, bias=use_bias)
+        self.fc1 = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         self.fc1._geometric_memory_weight_init = getattr(
             config,
             "weight_init_mode",
