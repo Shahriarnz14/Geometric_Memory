@@ -43,7 +43,6 @@ from tiny_graphs_notebooks.analysis.storage import (
     save_json,
     write_pickle,
 )
-from tiny_graphs_notebooks.notebook_utils.paths import get_tiny_graphs_root
 
 @dataclass
 class Node2VecSectionContext:
@@ -180,26 +179,14 @@ def _artifact_dirs(context: Node2VecSectionContext) -> dict[str, Path]:
 
 
 def _iter_artifact_dirs(context: Node2VecSectionContext) -> list[dict[str, Path]]:
-    """Returns local-first artifact directory sets, with legacy fallback."""
-    local_dirs = _artifact_dirs_for_root(
-        Path.cwd().resolve() / "saved_artifacts",
-        context,
-        create=False,
-    )
-    legacy_dirs = _artifact_dirs_for_root(
-        get_tiny_graphs_root() / "saved_artifacts",
-        context,
-        create=False,
-    )
-    roots_seen: set[Path] = set()
-    ordered_dirs: list[dict[str, Path]] = []
-    for dirs in (local_dirs, legacy_dirs):
-        root = dirs["root"].resolve()
-        if root in roots_seen:
-            continue
-        roots_seen.add(root)
-        ordered_dirs.append(dirs)
-    return ordered_dirs
+    """Returns artifact directories used by the current notebook-local layout."""
+    return [
+        _artifact_dirs_for_root(
+            Path.cwd().resolve() / "saved_artifacts",
+            context,
+            create=False,
+        )
+    ]
 
 
 def _canonical_identity_value(value: object) -> object:
@@ -270,14 +257,7 @@ def _is_node2vec_manifest(payload: Mapping[str, object]) -> bool:
     Returns:
         bool: True for node2vec manifests.
     """
-    payload_family = str(payload.get("model_family", "")).strip()
-    if payload_family:
-        return payload_family == 'node2vec'
-
-    # Backfill for older manifests without `model_family` metadata.
-    run_name = str(payload.get("run_name", ""))
-    checkpoint_name = Path(str(payload.get("checkpoint_path", ""))).name
-    return run_name.startswith('node2vec_') or checkpoint_name.startswith('node2vec_')
+    return str(payload.get("model_family", "")).strip() == 'node2vec'
 
 
 def _manifest_matches_node2vec_context(
@@ -298,26 +278,7 @@ def _manifest_matches_node2vec_context(
     if isinstance(payload_identity, Mapping):
         return _checkpoint_identity_key(payload_identity) == expected_key
 
-    payload_config = payload.get("config")
-    if isinstance(payload_config, Mapping):
-        expected_config = _canonical_identity(context.config)
-        return (
-            _canonical_identity(payload_config) == expected_config
-            and int(payload.get("seed", context.seed)) == int(context.seed)
-            and int(payload.get("node_count", context.node_count)) == int(context.node_count)
-        )
-
-    expected_self_edges = bool(context.config.get("add_self_edges", False))
-    run_name = str(payload.get("run_name", ""))
-    expected_tokens = [
-        f"node2vec_{context.graph_type}_",
-        f"_selfedge{int(expected_self_edges)}_",
-        f"_tied_d{int(context.config['embedding_dim'])}_",
-        f"_lr{str(float(context.config['learning_rate'])).replace('.', 'p')}_",
-        f"_e{int(context.config['num_epochs'])}_",
-        f"_s{int(context.seed)}_",
-    ]
-    return bool(run_name) and all(token in run_name for token in expected_tokens)
+    return False
 
 
 def _find_latest_node2vec_manifest(
