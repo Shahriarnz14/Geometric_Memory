@@ -148,7 +148,7 @@ def get_args(args_list=None):
         choices=["default", "non_geometric"],
         help=(
             "Weight initialization mode for the model. "
-            "'default' keeps the original GPT-style init; 'non_geometric' uses the custom uniform/normal head init."
+            "'default' keeps the original GPT-style init; 'non_geometric' only uses unit-normal embedding/lm_head init."
         ),
     )
     parser.add_argument(
