@@ -173,11 +173,11 @@ Use `--wandb_mode online` after logging into W&B if you want runs synced to the 
 If you find this code or the paper useful, please cite:
 
 ```bibtex
-@article{noroozizadeh2025deep,
+@inproceedings{noroozizadeh2025deep,
   title={Deep sequence models tend to memorize geometrically; it is unclear why},
   author={Noroozizadeh, Shahriar and Nagarajan, Vaishnavh and Rosenfeld, Elan and Kumar, Sanjiv},
-  journal={arXiv preprint arXiv:2510.26745},
+  booktitle={Forty-third International Conference on Machine Learning},
   url={https://arxiv.org/abs/2510.26745},
-  year={2025}
+  year={2026}
 }
 ```
